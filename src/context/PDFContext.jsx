@@ -14,6 +14,7 @@ const initialState = {
   voiceProvider: 'cloud',
   voiceName: '',
   theme: 'light',
+  notification: null,
 }
 
 function reducer(state, action) {
@@ -29,15 +30,30 @@ function reducer(state, action) {
     case 'SET_VOICE_PROVIDER': return { ...state, voiceProvider: action.payload, ttsState: 'idle', wordIndex: -1 }
     case 'SET_VOICE_NAME': return { ...state, voiceName: action.payload }
     case 'SET_THEME': return { ...state, theme: action.payload }
+    case 'SET_NOTIFICATION': return { ...state, notification: action.payload }
+    case 'CLEAR_NOTIFICATION': return { ...state, notification: null }
     default: return state
   }
+}
+
+export const SARVAM_CREDITS_NOTIFICATION = {
+  id: 'sarvam-credits',
+  type: 'warning',
+  message:
+    'Your Sarvam API credits are exhausted. Add credits at dashboard.sarvam.ai to restore TTS, translation, and read-along.',
+}
+
+export function notifySarvamCreditsExhausted(dispatch) {
+  dispatch({ type: 'SET_NOTIFICATION', payload: SARVAM_CREDITS_NOTIFICATION })
 }
 
 export function PDFProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   return (
     <PDFContext.Provider value={{ state, dispatch }}>
-      {children}
+      <div data-theme={state.theme} className="h-full min-h-screen">
+        {children}
+      </div>
     </PDFContext.Provider>
   )
 }

@@ -1,4 +1,12 @@
+import { isSarvamCreditsPayload } from '../lib/sarvamErrors'
+
 const CUSTOM_TTS_URL = import.meta.env.VITE_TTS_API_URL || 'http://127.0.0.1:8765/tts'
+
+function maybeNotifySarvamCredits(data, status, onSarvamCreditsExhausted) {
+  if (onSarvamCreditsExhausted && isSarvamCreditsPayload(data, status)) {
+    onSarvamCreditsExhausted(data)
+  }
+}
 
 export function getAvailableVoices(language) {
   const voices = window.speechSynthesis.getVoices()
@@ -30,7 +38,7 @@ export function supportsCloudTTS() {
   return Boolean(CUSTOM_TTS_URL)
 }
 
-export async function requestCloudTTS({ text, language, rate = '+0%', voice = '' }) {
+export async function requestCloudTTS({ text, language, rate = '+0%', voice = '', onSarvamCreditsExhausted }) {
   if (!CUSTOM_TTS_URL) {
     throw new Error('Cloud TTS is not configured')
   }
@@ -43,11 +51,15 @@ export async function requestCloudTTS({ text, language, rate = '+0%', voice = ''
     body: JSON.stringify({ text, language, rate, voice }),
   })
 
+  const data = await response.json().catch(() => ({}))
+
   if (!response.ok) {
+    maybeNotifySarvamCredits(data, response.status, onSarvamCreditsExhausted)
     throw new Error('Cloud TTS request failed')
   }
 
-  const data = await response.json()
+  maybeNotifySarvamCredits(data, response.status, onSarvamCreditsExhausted)
+
   const binaryString = atob(data.audio)
   const len = binaryString.length
   const bytes = new Uint8Array(len)
@@ -59,11 +71,12 @@ export async function requestCloudTTS({ text, language, rate = '+0%', voice = ''
 
   return {
     url,
-    wordBoundaries: data.word_boundaries || []
+    wordBoundaries: data.word_boundaries || [],
+    sarvamCreditsExhausted: Boolean(data.sarvam_credits_exhausted),
   }
 }
 
-export async function requestCloudTTSBoundaries({ text, language, rate = '+0%', voice = '' }) {
+export async function requestCloudTTSBoundaries({ text, language, rate = '+0%', voice = '', onSarvamCreditsExhausted }) {
   if (!CUSTOM_TTS_URL) {
     throw new Error('Cloud TTS is not configured')
   }
@@ -80,12 +93,19 @@ export async function requestCloudTTSBoundaries({ text, language, rate = '+0%', 
     body: JSON.stringify({ text, language, rate, voice }),
   })
 
+  const data = await response.json().catch(() => ({}))
+
   if (!response.ok) {
+    maybeNotifySarvamCredits(data, response.status, onSarvamCreditsExhausted)
     throw new Error('Cloud TTS boundaries request failed')
   }
 
-  const data = await response.json()
-  return data.word_boundaries || []
+  maybeNotifySarvamCredits(data, response.status, onSarvamCreditsExhausted)
+
+  return {
+    wordBoundaries: data.word_boundaries || [],
+    sarvamCreditsExhausted: Boolean(data.sarvam_credits_exhausted),
+  }
 }
 
 export function getTTSStreamUrl({ text, language, rate = '+0%', voice = '' }) {

@@ -1,3 +1,5 @@
+import { isSarvamCreditsPayload } from '../lib/sarvamErrors'
+
 function isPageNumber(str) {
   const trimmed = str.trim()
   return /^\d+$/.test(trimmed) || /^[ivx]+$/i.test(trimmed)
@@ -699,7 +701,8 @@ export async function extractPageText(pdfDoc, pageNumber) {
   return getPageText(pdfDoc, pageNumber)
 }
 
-export async function fetchSemanticAnalysis(sourceText, fallbackTitle = '', isDigest = false, language = 'en-US') {
+export async function fetchSemanticAnalysis(sourceText, fallbackTitle = '', isDigest = false, language = 'en-US', options = {}) {
+  const { onSarvamCreditsExhausted } = options
   // If the page contains very little content (under 30 words), skip the local LLM
   // to avoid hallucinations or system instructions reflections.
   const wordCount = sourceText ? sourceText.trim().split(/\s+/).filter(Boolean).length : 0
@@ -719,6 +722,10 @@ export async function fetchSemanticAnalysis(sourceText, fallbackTitle = '', isDi
 
     if (response.ok) {
       const data = await response.json()
+
+      if (data.sarvam_credits_exhausted && onSarvamCreditsExhausted) {
+        onSarvamCreditsExhausted(data)
+      }
 
       // ── Digest response from LLM ───────────────────────────────────────────
       if (isDigest && Array.isArray(data.topics)) {
@@ -754,6 +761,9 @@ export async function fetchSemanticAnalysis(sourceText, fallbackTitle = '', isDi
     } else {
       // FastAPI raises HTTPException with a "detail" field (not "error")
       const errData = await response.json().catch(() => ({}))
+      if (onSarvamCreditsExhausted && isSarvamCreditsPayload(errData, response.status)) {
+        onSarvamCreditsExhausted(errData)
+      }
       const msg = errData.detail || errData.error || `HTTP ${response.status}`
       console.warn('Local LLM analysis returned error:', msg)
     }
@@ -769,7 +779,8 @@ export async function fetchSemanticAnalysis(sourceText, fallbackTitle = '', isDi
   return null
 }
 
-export async function fetchTeluguDeck(deck) {
+export async function fetchTeluguDeck(deck, options = {}) {
+  const { onSarvamCreditsExhausted } = options
   if (!deck) return null
 
   try {
@@ -782,6 +793,9 @@ export async function fetchTeluguDeck(deck) {
 
     if (!response.ok) {
       const errData = await response.json().catch(() => ({}))
+      if (onSarvamCreditsExhausted && isSarvamCreditsPayload(errData, response.status)) {
+        onSarvamCreditsExhausted(errData)
+      }
       console.warn('Telugu deck translation failed:', errData.detail || response.status)
       return null
     }

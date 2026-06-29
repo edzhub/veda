@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { usePDF } from '../context/PDFContext'
+import { usePDF, notifySarvamCreditsExhausted } from '../context/PDFContext'
 import { extractPagePresentation, extractPageText, fetchSemanticAnalysis, fetchTeluguDeck } from '../utils/pdfUtils'
 import { requestCloudTTS, requestCloudTTSBoundaries, getTTSStreamUrl, supportsCloudTTS } from '../utils/speechUtils'
+import { cn } from '../lib/cn'
 import AIAvatar from './AIAvatar'
 
 function splitWords(text) {
@@ -177,72 +178,32 @@ function OriginalPageModal({ isOpen, onClose, canvasRef }) {
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.7)',
-        backdropFilter: 'blur(12px)',
-        zIndex: 1000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '2rem',
-      }}
+      className="fixed inset-0 z-[1000] flex items-center justify-center p-8 bg-black/70 backdrop-blur-md"
       onClick={onClose}
     >
       <div
-        style={{
-          background: '#ffffff',
-          borderRadius: '24px',
-          padding: '1.25rem',
-          maxWidth: '90vw',
-          maxHeight: '90vh',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1rem',
-          boxShadow: '0 25px 50px rgba(0,0,0,0.3)',
-          position: 'relative',
-        }}
+        className="bg-white rounded-3xl p-5 max-w-[90vw] max-h-[90vh] flex flex-col gap-4 shadow-2xl relative"
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eaebed', paddingBottom: '0.5rem' }}>
-          <span style={{ fontWeight: 700, color: '#2c2c2c', fontSize: '1.05rem', fontFamily: 'system-ui, sans-serif' }}>Original PDF Page Render</span>
+        <div className="flex justify-between items-center border-b border-veda-border pb-2">
+          <span className="font-bold text-veda-text text-lg">Original PDF Page Render</span>
           <button
             onClick={onClose}
-            style={{
-              background: 'rgba(0,0,0,0.05)',
-              border: 'none',
-              borderRadius: '50%',
-              width: '28px',
-              height: '28px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              fontSize: '0.9rem',
-              color: '#555',
-            }}
+            className="w-7 h-7 flex items-center justify-center rounded-full bg-black/5 border-none cursor-pointer text-[#555555] hover:bg-black/10"
           >
             ✕
           </button>
         </div>
 
-        <div style={{ overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#f5f5f5', borderRadius: '12px', padding: '0.5rem' }}>
+        <div className="overflow-auto flex justify-center items-center bg-[#f5f5f5] rounded-xl p-2">
           {dataUrl ? (
             <img
               src={dataUrl}
               alt="High-resolution PDF Page"
-              style={{
-                maxWidth: '100%',
-                maxHeight: '72vh',
-                objectFit: 'contain',
-                borderRadius: '8px',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
-                border: '1px solid #e0e0e0',
-              }}
+              className="max-w-full max-h-[72vh] object-contain rounded-lg shadow-md border border-[#e0e0e0]"
             />
           ) : (
-            <p style={{ color: '#666', padding: '2rem' }}>Rendering high-res page...</p>
+            <p className="text-veda-muted p-8">Rendering high-res page...</p>
           )}
         </div>
       </div>
@@ -289,18 +250,10 @@ function EnlargedImageModal({ imageUrl, title, onClose }) {
 
   return (
     <div
-      className={isClosing ? "animate-fade-out-backdrop" : "animate-fade-in-backdrop"}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 2000,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '2rem',
-        cursor: 'zoom-out'
-      }}
+      className={cn(
+        'fixed inset-0 z-[2000] flex flex-col items-center justify-center p-8 cursor-zoom-out',
+        isClosing ? 'animate-fade-out-backdrop' : 'animate-fade-in-backdrop'
+      )}
       onClick={handleClose}
     >
       <button
@@ -308,38 +261,9 @@ function EnlargedImageModal({ imageUrl, title, onClose }) {
           e.stopPropagation()
           handleClose()
         }}
-        style={{
-          position: 'absolute',
-          top: '24px',
-          right: '24px',
-          background: 'rgba(255, 255, 255, 0.08)',
-          border: '1px solid rgba(255, 255, 255, 0.15)',
-          borderRadius: '50%',
-          width: '44px',
-          height: '44px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          color: '#ffffff',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
-          transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-          zIndex: 2100,
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.18)'
-          e.currentTarget.style.transform = 'scale(1.08)'
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)'
-          e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.35)'
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'
-          e.currentTarget.style.transform = 'scale(1)'
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)'
-          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)'
-        }}
+        className="absolute top-6 right-6 z-[2100] w-11 h-11 flex items-center justify-center rounded-full
+          bg-white/10 border border-white/15 text-white backdrop-blur-xl shadow-lg
+          transition-all duration-300 hover:bg-white/20 hover:scale-110 hover:border-white/30 hover:shadow-xl"
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M1 1L13 13M1 13L13 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -347,47 +271,22 @@ function EnlargedImageModal({ imageUrl, title, onClose }) {
       </button>
 
       <div
-        className={isClosing ? "animate-zoom-out-spring" : "animate-zoom-in-spring"}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '1rem',
-          maxWidth: '85vw',
-          maxHeight: '80vh',
-          cursor: 'default'
-        }}
+        className={cn(
+          'flex flex-col items-center gap-4 max-w-[85vw] max-h-[80vh] cursor-default',
+          isClosing ? 'animate-zoom-out-spring' : 'animate-zoom-in-spring'
+        )}
         onClick={(e) => e.stopPropagation()}
       >
         <img
           src={renderedImageUrl}
           alt={renderedTitle || "Enlarged view"}
-          style={{
-            maxWidth: '100%',
-            maxHeight: '75vh',
-            objectFit: 'contain',
-            borderRadius: '20px',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            boxShadow: '0 30px 60px rgba(0,0,0,0.6)',
-          }}
+          className="max-w-full max-h-[75vh] object-contain rounded-[20px] border border-white/10 shadow-2xl"
         />
         {renderedTitle && (
           <span
-            style={{
-              color: '#ffffff',
-              fontSize: '0.88rem',
-              fontWeight: 500,
-              fontFamily: "'Outfit', sans-serif",
-              textAlign: 'center',
-              background: 'rgba(20, 20, 20, 0.65)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              padding: '0.5rem 1.25rem',
-              borderRadius: '999px',
-              backdropFilter: 'blur(20px)',
-              WebkitBackdropFilter: 'blur(20px)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-              marginTop: '0.4rem',
-            }}
+            className="text-white text-sm font-medium font-display text-center mt-1.5
+              bg-[rgba(20,20,20,0.65)] border border-white/10 px-5 py-2 rounded-full
+              backdrop-blur-xl shadow-2xl"
           >
             {renderedTitle}
           </span>
@@ -400,6 +299,13 @@ function EnlargedImageModal({ imageUrl, title, onClose }) {
 export default function RightPanel() {
   const { state, dispatch } = usePDF()
   const isLight = state.theme === 'light'
+  const sarvamCreditsNotifiedRef = useRef(false)
+  const onSarvamCreditsExhausted = useCallback(() => {
+    if (!sarvamCreditsNotifiedRef.current) {
+      sarvamCreditsNotifiedRef.current = true
+      notifySarvamCreditsExhausted(dispatch)
+    }
+  }, [dispatch])
   const renderCanvasRef = useRef(null)
   const renderTaskRef = useRef(null)
   const audioRef = useRef(null)
@@ -676,6 +582,7 @@ export default function RightPanel() {
               language: state.language,
               rate: speechRate,
               voice: selectedVoice,
+              onSarvamCreditsExhausted,
             })
             if (isCancelled) {
               if (result.url) URL.revokeObjectURL(result.url)
@@ -807,6 +714,7 @@ export default function RightPanel() {
                   language: state.language,
                   rate: speechRate,
                   voice: selectedVoice,
+                  onSarvamCreditsExhausted,
                 })
                 if (isCancelled) {
                   if (result.url) URL.revokeObjectURL(result.url)
@@ -900,7 +808,7 @@ export default function RightPanel() {
         handleStop()
         setPageDeck(sourceDeck)
 
-        fetchTeluguDeck(sourceDeck)
+        fetchTeluguDeck(sourceDeck, { onSarvamCreditsExhausted })
           .then((translatedDeck) => {
             if (isCancelled || !translatedDeck) {
               setIsAnalyzing(false)
@@ -985,7 +893,7 @@ export default function RightPanel() {
 
         // Kick off semantic analysis in the background
         setIsAnalyzing(true)
-        fetchSemanticAnalysis(deck.sourceText, deck.title, deck.isDigest, state.language)
+        fetchSemanticAnalysis(deck.sourceText, deck.title, deck.isDigest, state.language, { onSarvamCreditsExhausted })
           .then(async (semanticData) => {
             if (isCancelled) return
 
@@ -993,7 +901,7 @@ export default function RightPanel() {
             if (semanticData) {
               finalDeck = mergeSemanticDeck(deck, semanticData)
             } else if (state.language === 'te-IN') {
-              finalDeck = await fetchTeluguDeck(deck)
+              finalDeck = await fetchTeluguDeck(deck, { onSarvamCreditsExhausted })
             }
 
             setIsAnalyzing(false)
@@ -1088,7 +996,9 @@ export default function RightPanel() {
         language: state.language,
         rate: speechRate,
         voice: selectedVoice,
-      }).then((boundaries) => {
+        onSarvamCreditsExhausted,
+      }).then((result) => {
+        const boundaries = result.wordBoundaries || []
         // Ensure that this response still applies to the active audio stream
         if (audioRef.current && audioRef.current.src === streamUrl) {
           console.log(`[Streaming] Boundaries loaded for streaming: ${boundaries.length} words`)
@@ -1170,63 +1080,26 @@ export default function RightPanel() {
     const isPlayingOrPaused = state.ttsState === 'speaking' || state.ttsState === 'paused'
 
     return (
-      <div
-        style={{
-          lineHeight: '1.75',
-          fontSize: '0.98rem',
-          fontFamily: "'Inter', system-ui, sans-serif",
-          letterSpacing: '-0.01em',
-          wordSpacing: '0.04em',
-          color: isLight ? '#2c2c2c' : '#ddd8ca',
-          padding: '0.5rem',
-        }}
-      >
+      <div className="leading-relaxed text-[0.98rem] font-sans tracking-tight px-2 py-2 veda-text-primary">
         {words.map((word, index) => {
           const isActive = state.wordIndex === index
           const isPast = state.wordIndex > index && state.wordIndex !== -1
-
-          const textColor = isLight
-            ? (isActive
-              ? '#111111'
-              : isPast
-                ? '#b45309'
-                : isPlayingOrPaused
-                  ? 'rgba(0, 0, 0, 0.28)'
-                  : '#333333')
-            : (isActive
-              ? '#ffffff'
-              : isPast
-                ? '#f5a623'
-                : isPlayingOrPaused
-                  ? 'rgba(255, 255, 255, 0.22)'
-                  : '#ddd8ca')
-
-          const textShadow = isActive
-            ? (isLight ? 'none' : '0 0 15px rgba(255,255,255,0.7), 0 0 2px rgba(255,255,255,0.9)')
-            : 'none'
-          const transformScale = isActive ? 'scale(1.08)' : 'scale(1.0)'
 
           return (
             <span
               key={`${word.start}-${word.text}`}
               ref={isActive ? activeWordRef : null}
               onClick={() => handleWordClick(index)}
-              className="karaoke-word"
+              className={cn(
+                'karaoke-word',
+                isActive && 'mr-0.5 px-1.5 font-bold scale-110 bg-veda-accent/15 dark:bg-white/15',
+                isPast && 'font-semibold text-[#b45309] dark:text-veda-accent-dark',
+                !isActive && !isPast && isPlayingOrPaused && 'text-black/30 dark:text-white/25',
+                !isActive && !isPast && !isPlayingOrPaused && 'font-normal'
+              )}
               style={{
-                display: 'inline-block',
-                marginRight: isActive ? '0.12rem' : '0.32rem',
-                color: textColor,
-                textShadow: textShadow,
-                transform: transformScale,
-                fontWeight: isActive ? '700' : isPast ? '600' : '400',
-                transition: 'all 240ms cubic-bezier(0.34, 1.56, 0.64, 1)',
-                cursor: 'pointer',
-                backgroundColor: isActive
-                  ? (isLight ? 'rgba(217, 119, 6, 0.14)' : 'rgba(255, 255, 255, 0.15)')
-                  : 'transparent',
-                borderRadius: '6px',
-                padding: isActive ? '0px 6px' : '0px 2px',
                 '--word-hover-color': isLight ? '#d97706' : '#ffd27a',
+                textShadow: isActive && !isLight ? '0 0 15px rgba(255,255,255,0.7), 0 0 2px rgba(255,255,255,0.9)' : 'none',
               }}
             >
               {word.text}
@@ -1238,36 +1111,14 @@ export default function RightPanel() {
   }
 
 
-  // Dynamic Theme Color Palette
-  const bgMain = isLight ? '#faf9f6' : '#0b0c10'
-  const bgHeader = isLight
-    ? 'linear-gradient(180deg, #ffffff 0%, #faf9f6 100%)'
-    : 'linear-gradient(180deg, #13151a 0%, #0d0f12 100%)'
-  const borderHeader = isLight ? '#eaebed' : '#1e222b'
-  const textPrimary = isLight ? '#2c2c2c' : '#f4f0e7'
-  const textSecondary = isLight ? '#666666' : '#888880'
-
-  const badgeBg = isLight ? 'rgba(217,119,6,0.06)' : 'rgba(245,166,35,0.16)'
-  const badgeText = isLight ? '#d97706' : '#f5a623'
-  const badgeBorder = isLight ? '1px solid rgba(217,119,6,0.12)' : '1px solid rgba(245,166,35,0.2)'
-  const progressBarBg = isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.08)'
-
-  const cardBg = isLight ? '#ffffff' : '#13151a'
-  const cardBorder = isLight ? '1px solid #eaebed' : '1px solid rgba(245,166,35,0.08)'
-  const cardShadow = isLight ? '0 12px 30px rgba(0,0,0,0.02)' : '0 22px 50px rgba(0,0,0,0.28)'
-
-  const studioBg = isLight ? 'linear-gradient(180deg, #ffffff 0%, #fcfbf9 100%)' : 'linear-gradient(180deg, #13151a 0%, #0d0f12 100%)'
-  const studioBorder = isLight ? '1px solid #eaebed' : '1px solid #1e222b'
-
-  const emptyStateBg = isLight
-    ? 'radial-gradient(circle at top, rgba(217,119,6,0.04), rgba(255,255,255,0.98) 70%)'
-    : 'radial-gradient(circle at top, rgba(245,166,35,0.08), rgba(11,12,16,0.92) 50%)'
-
-  const themeColor = isLight ? '#d97706' : '#f5a623'
+  // Accent color for SVG arrows in legacy inline spots
+  const isPlayPrimary = state.ttsState !== 'speaking'
+  const isPauseActive = state.ttsState === 'speaking'
+  const isStopActive = state.ttsState !== 'idle'
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100vh', overflow: 'hidden', background: bgMain, transition: 'background 0.3s ease', position: 'relative' }}>
-      <canvas ref={renderCanvasRef} style={{ display: 'none' }} />
+    <div className="relative flex flex-col flex-1 h-screen overflow-hidden bg-veda-surface dark:bg-veda-surface-dark transition-colors duration-300">
+      <canvas ref={renderCanvasRef} className="hidden" />
 
       {/* Original PDF Page modal overlay */}
       <OriginalPageModal isOpen={isOriginalModalOpen} onClose={() => setIsOriginalModalOpen(false)} canvasRef={renderCanvasRef} />
@@ -1276,57 +1127,25 @@ export default function RightPanel() {
       <EnlargedImageModal imageUrl={enlargedImage} title={enlargedTitle} onClose={() => setEnlargedImage(null)} />
 
       {/* Top Header bar */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '1rem 1.5rem',
-          borderBottom: `1px solid ${borderHeader}`,
-          background: bgHeader,
-          flexShrink: 0,
-          transition: 'background 0.3s ease, border-color 0.3s ease',
-        }}
+      <header
+        className="flex items-center justify-between px-6 py-4 shrink-0 border-b transition-colors duration-300
+          border-veda-border bg-gradient-to-b from-white to-veda-surface
+          dark:border-veda-border-dark dark:from-veda-card-dark dark:to-[#0d0f12]"
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.22rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <span
-              style={{
-                fontSize: '0.7rem',
-                padding: '0.25rem 0.55rem',
-                borderRadius: '999px',
-                background: badgeBg,
-                color: badgeText,
-                border: badgeBorder,
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                fontWeight: 700,
-              }}
-            >
-              Presentation View
-            </span>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="veda-badge">Presentation View</span>
           </div>
 
-          <span style={{ color: textPrimary, fontSize: '1.25rem', fontWeight: 800, fontFamily: 'Outfit, sans-serif' }}>
+          <span className="veda-text-primary text-xl font-extrabold font-display">
             {pageDeck?.title || selectedEntry?.title || 'Select a topic from the contents'}
           </span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div className="flex items-center gap-4">
           {/* Page navigation controls */}
           {state.selectedPage && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.6rem',
-              background: isLight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.03)',
-              padding: '0.3rem 0.6rem',
-              borderRadius: '12px',
-              border: isLight ? '1px solid rgba(0,0,0,0.06)' : '1px solid rgba(255,255,255,0.08)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-              boxShadow: isLight ? '0 2px 8px rgba(0, 0, 0, 0.03)' : '0 4px 12px rgba(0, 0, 0, 0.15)'
-            }}>
+            <div className="veda-glass-chip">
               <button
                 onClick={() => {
                   if (state.selectedPage > 1) {
@@ -1334,30 +1153,13 @@ export default function RightPanel() {
                   }
                 }}
                 disabled={state.selectedPage <= 1}
-                className="glass-btn"
-                style={{
-                  background: isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.05)',
-                  color: isLight ? '#2c2c2c' : '#ffffff',
-                  border: isLight ? '1px solid rgba(0,0,0,0.04)' : '1px solid rgba(255,255,255,0.06)',
-                  borderRadius: '8px',
-                  width: '26px',
-                  height: '26px',
-                  fontSize: '0.6rem',
-                }}
-                onMouseEnter={(e) => {
-                  if (state.selectedPage > 1) {
-                    e.currentTarget.style.background = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.12)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.05)'
-                }}
+                className="veda-icon-btn glass-btn"
                 title="Previous Page"
               >
                 ◀
               </button>
 
-              <span style={{ color: textPrimary, fontSize: '0.78rem', fontWeight: 700, minWidth: '95px', textAlign: 'center', fontFamily: "'Outfit', sans-serif" }}>
+              <span className="veda-text-primary text-[0.78rem] font-bold min-w-[95px] text-center font-display">
                 Page {state.selectedPage}
                 {state.pageOffset && (state.selectedPage - state.pageOffset > 0)
                   ? ` (P. ${state.selectedPage - state.pageOffset})`
@@ -1371,24 +1173,7 @@ export default function RightPanel() {
                   }
                 }}
                 disabled={!state.pdfDoc || state.selectedPage >= state.pdfDoc.numPages}
-                className="glass-btn"
-                style={{
-                  background: isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.05)',
-                  color: isLight ? '#2c2c2c' : '#ffffff',
-                  border: isLight ? '1px solid rgba(0,0,0,0.04)' : '1px solid rgba(255,255,255,0.06)',
-                  borderRadius: '8px',
-                  width: '26px',
-                  height: '26px',
-                  fontSize: '0.6rem',
-                }}
-                onMouseEnter={(e) => {
-                  if (state.pdfDoc && state.selectedPage < state.pdfDoc.numPages) {
-                    e.currentTarget.style.background = isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.12)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.05)'
-                }}
+                className="veda-icon-btn glass-btn"
                 title="Next Page"
               >
                 ▶
@@ -1399,89 +1184,40 @@ export default function RightPanel() {
           {/* Sun/Moon Theme Switcher */}
           <button
             onClick={() => dispatch({ type: 'SET_THEME', payload: isLight ? 'dark' : 'light' })}
-            className="glass-btn"
-            style={{
-              fontSize: '0.9rem',
-              borderRadius: '50%',
-              background: isLight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.05)',
-              color: isLight ? '#2c2c2c' : '#cfc6b1',
-              border: isLight ? '1px solid rgba(0, 0, 0, 0.06)' : '1px solid rgba(255, 255, 255, 0.08)',
-              width: '34px',
-              height: '34px',
-              boxShadow: isLight ? '0 2px 8px rgba(0, 0, 0, 0.04)' : '0 4px 12px rgba(0, 0, 0, 0.15)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = isLight ? 'rgba(255, 255, 255, 0.65)' : 'rgba(255, 255, 255, 0.12)';
-              e.currentTarget.style.borderColor = isLight ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.2)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = isLight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.05)';
-              e.currentTarget.style.borderColor = isLight ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
-            }}
+            className="glass-btn w-[34px] h-[34px] rounded-full text-sm
+              bg-white/45 text-veda-text border border-black/5 shadow-sm
+              hover:bg-white/65 hover:border-black/10
+              dark:bg-white/5 dark:text-[#cfc6b1] dark:border-white/10 dark:shadow-md
+              dark:hover:bg-white/10 dark:hover:border-white/20"
             title={isLight ? "Toggle Dark Mode" : "Toggle Light Mode"}
           >
             {isLight ? '🌙' : '☀️'}
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Main dashboard body */}
-      <div style={{ flex: 1, display: 'flex', gap: '1.5rem', padding: '1.5rem 1.5rem 0 1.5rem', overflow: 'hidden', minHeight: 0 }}>
+      <div className="flex-1 flex gap-6 px-6 pt-6 overflow-hidden min-h-0">
         {!state.selectedPage ? (
           <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flex: 1,
-              gap: '1rem',
-              borderRadius: '30px',
-              border: isLight ? '1px solid #eaebed' : '1px solid #1e222b',
-              background: emptyStateBg,
-              marginBottom: '1.5rem',
-            }}
+            className="flex flex-col items-center justify-center flex-1 gap-4 rounded-[30px] mb-6
+              border border-veda-border bg-[radial-gradient(circle_at_top,rgba(217,119,6,0.04),rgba(255,255,255,0.98)_70%)]
+              dark:border-veda-border-dark dark:bg-[radial-gradient(circle_at_top,rgba(245,166,35,0.08),rgba(11,12,16,0.92)_50%)]"
           >
-            <div style={{ fontSize: '3.4rem' }}>🎙️</div>
-            <p style={{ color: isLight ? '#2c2c2c' : '#f3efe6', fontWeight: 700, fontSize: '1.15rem' }}>Nothing selected yet</p>
-            <p style={{ color: '#888880', fontSize: '0.85rem' }}>Pick a topic from the table of contents and Veda will present it</p>
+            <div className="text-[3.4rem]">🎙️</div>
+            <p className="veda-text-primary font-bold text-lg">Nothing selected yet</p>
+            <p className="veda-text-muted text-sm">Pick a topic from the table of contents and Veda will present it</p>
           </div>
         ) : (
           <>
             {/* Slide Stage Area (60% width) */}
-            <div
-              style={{
-                flex: '0 0 60%',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'stretch',
-                paddingBottom: '7.5rem',
-                height: '100%',
-                minHeight: 0,
-              }}
-            >
+            <div className="flex-[0_0_60%] flex flex-col items-stretch pb-[7.5rem] h-full min-h-0">
               <div
                 key={state.selectedPage}
-                className="animate-fade-in-up"
-                style={{
-                  flex: 1,
-                  width: '100%',
-                  position: 'relative',
-                  borderRadius: '24px',
-                  border: cardBorder,
-                  background: cardBg,
-                  boxShadow: cardShadow,
-                  padding: '1.5rem 1.75rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'center',
-                  transition: 'all 0.3s ease',
-                  overflow: 'hidden',
-                  minHeight: 0,
-                }}
+                className="animate-fade-in-up veda-card flex-1 w-full relative rounded-3xl p-6 flex flex-col justify-center overflow-hidden min-h-0 transition-all duration-300"
               >
                 {/* Badge overlay indicating status */}
-                <div style={{ position: 'absolute', top: '1rem', right: '1.25rem', fontSize: '0.68rem', color: textSecondary, fontWeight: 600 }}>
+                <div className="absolute top-4 right-5 text-[0.68rem] veda-text-muted font-semibold">
                   {isPreparing
                     ? 'Preparing page...'
                     : isAnalyzing
@@ -1499,234 +1235,129 @@ export default function RightPanel() {
                     const activeTopic = topics[digestTopicIndex] || {}
                     const topicImage = activeTopic.image || null
                     return (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%', height: '100%', minHeight: 0 }}>
-
-                        {/* Header row: section title + story counter */}
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <h2 style={{ margin: 0, color: isLight ? '#111111' : '#fff7ea', fontSize: '1.1rem', fontWeight: 800, letterSpacing: '-0.02em' }}>
+                      <div className="flex flex-col gap-2 w-full h-full min-h-0">
+                        <div className="flex items-center justify-between shrink-0">
+                          <div className="flex items-center gap-2">
+                            <h2 className="m-0 text-[#111111] dark:text-[#fff7ea] text-lg font-extrabold tracking-tight">
                               {pageDeck.title || selectedEntry?.title}
                             </h2>
-                            <span style={{
-                              fontSize: '0.62rem', padding: '0.18rem 0.5rem', borderRadius: '999px',
-                              background: `${themeColor}22`, color: themeColor,
-                              border: `1px solid ${themeColor}44`, fontWeight: 700,
-                              letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap',
-                            }}>
-                              {total} stories
-                            </span>
+                            <span className="veda-story-count">{total} stories</span>
                           </div>
                         </div>
 
-                        {/* Active story content */}
-                        {/* Active story content */}
                         <div
                           key={digestTopicIndex}
-                          className="animate-story-fade-in"
-                          style={{
-                            flex: 1, minHeight: 0,
-                            display: 'grid',
-                            gridTemplateColumns: topicImage ? '1fr 0.75fr' : '1fr',
-                            gap: '1rem',
-                            alignItems: 'start',
-                          }}
+                          className={cn(
+                            'animate-story-fade-in flex-1 min-h-0 grid gap-4 items-start',
+                            topicImage ? 'grid-cols-[1fr_0.75fr]' : 'grid-cols-1'
+                          )}
                         >
-                          {/* Story text */}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', overflowY: 'auto', maxHeight: '100%', paddingRight: '0.3rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
-                              <span style={{ fontSize: '0.62rem', fontWeight: 700, color: themeColor, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Story {digestTopicIndex + 1}</span>
-                              <span style={{ width: '20px', height: '1px', background: `${themeColor}66` }} />
+                          <div className="flex flex-col gap-2 overflow-y-auto max-h-full pr-1">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[0.62rem] font-bold veda-accent-text tracking-widest uppercase">
+                                Story {digestTopicIndex + 1}
+                              </span>
+                              <span className="w-5 h-px bg-veda-accent/40 dark:bg-veda-accent-dark/40" />
                             </div>
-                            <h3 style={{ margin: 0, color: isLight ? '#111111' : '#fff7ea', fontSize: '1.25rem', fontWeight: 800, lineHeight: 1.25, letterSpacing: '-0.02em' }}>
+                            <h3 className="m-0 text-[#111111] dark:text-[#fff7ea] text-xl font-extrabold leading-tight tracking-tight">
                               {activeTopic.title}
                             </h3>
                             {(activeTopic.body || activeTopic.summary) && (
-                              <p style={{ margin: '0.2rem 0 0 0', color: isLight ? '#444444' : '#c8bfad', fontSize: '0.84rem', lineHeight: 1.65 }}>
+                              <p className="mt-1 mb-0 text-[#444444] dark:text-[#c8bfad] text-sm leading-relaxed">
                                 {activeTopic.body || activeTopic.summary}
                               </p>
                             )}
                           </div>
 
-                          {/* Per-topic image */}
                           {topicImage && (
                             <div
                               onClick={() => { setEnlargedImage(topicImage); setEnlargedTitle(activeTopic.title); }}
-                              style={{
-                                borderRadius: '14px', overflow: 'hidden',
-                                border: isLight ? '1px solid #eaebed' : '1px solid rgba(255,255,255,0.06)',
-                                background: isLight ? '#f8f8f6' : '#0c0d10',
-                                boxShadow: isLight ? '0 4px 16px rgba(0,0,0,0.04)' : '0 8px 24px rgba(0,0,0,0.3)',
-                                aspectRatio: '4/3', width: '100%',
-                                cursor: 'zoom-in',
-                                transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.transform = 'scale(1.025)'
-                                e.currentTarget.style.boxShadow = isLight 
-                                  ? '0 12px 30px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.02)' 
-                                  : '0 16px 40px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.2)'
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.transform = 'scale(1)'
-                                e.currentTarget.style.boxShadow = isLight 
-                                  ? '0 4px 16px rgba(0,0,0,0.04)' 
-                                  : '0 8px 24px rgba(0,0,0,0.3)'
-                              }}
+                              className="veda-zoom-image"
                             >
-                              <img src={topicImage} alt={activeTopic.title} style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+                              <img src={topicImage} alt={activeTopic.title} className="w-full h-full object-contain block" />
                             </div>
                           )}
                         </div>
 
-                        {/* Digest Controls: Prev Arrow + Dots + Counter + Next Arrow */}
-                        <div
-                          className="animate-nav-slide-up"
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1.25rem', flexShrink: 0, marginTop: '0.8rem' }}
-                        >
+                        <div className="animate-nav-slide-up flex items-center justify-center gap-5 shrink-0 mt-3">
                           <button
                             onClick={() => { handleStop(); setDigestTopicIndex((i) => Math.max(0, i - 1)); }}
                             disabled={digestTopicIndex === 0}
-                            className="glass-btn digest-nav-btn prev"
-                            style={{
-                              background: digestTopicIndex === 0
-                                ? (isLight ? 'rgba(0, 0, 0, 0.02)' : 'rgba(255,255,255,0.04)')
-                                : (isLight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255,255,255,0.08)'),
-                              border: digestTopicIndex === 0
-                                ? (isLight ? '1px solid rgba(0,0,0,0.04)' : '1px solid rgba(255,255,255,0.05)')
-                                : (isLight ? '1px solid rgba(0, 0, 0, 0.06)' : '1px solid rgba(255, 255, 255, 0.08)'),
-                              color: digestTopicIndex === 0 ? (isLight ? '#ccc' : '#555') : (isLight ? '#2c2c2c' : '#ffffff'),
-                              boxShadow: digestTopicIndex === 0 ? 'none' : (isLight ? '0 2px 6px rgba(0,0,0,0.03)' : '0 4px 12px rgba(0,0,0,0.2)'),
-                              fontSize: '0.9rem',
-                              width: '32px',
-                              height: '32px',
-                              borderRadius: '10px',
-                            }}
+                            className={cn('glass-btn digest-nav-btn prev', digestTopicIndex === 0 ? 'veda-digest-nav-disabled' : 'veda-digest-nav-enabled')}
                           >‹</button>
 
-                          {/* Dot indicators */}
-                          <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                          <div className="flex gap-1.5 items-center">
                             {topics.map((_, idx) => (
                               <button
                                 key={idx}
                                 onClick={() => { handleStop(); setDigestTopicIndex(idx); }}
-                                className={`digest-dot ${idx === digestTopicIndex ? 'active' : ''}`}
-                                style={{
-                                  width: idx === digestTopicIndex ? '20px' : '6px',
-                                  background: idx === digestTopicIndex ? themeColor : (isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.15)'),
-                                  border: idx === digestTopicIndex ? 'none' : (isLight ? '1px solid rgba(0,0,0,0.05)' : '1px solid rgba(255,255,255,0.08)'),
-                                  backdropFilter: idx === digestTopicIndex ? 'none' : 'blur(4px)',
-                                  WebkitBackdropFilter: idx === digestTopicIndex ? 'none' : 'blur(4px)',
-                                }}
+                                className={cn(
+                                  'digest-dot',
+                                  idx === digestTopicIndex
+                                    ? 'w-5 bg-veda-accent dark:bg-veda-accent-dark border-none'
+                                    : 'w-1.5 bg-black/10 dark:bg-white/15 border border-black/5 dark:border-white/10 backdrop-blur-sm'
+                                )}
                               />
                             ))}
                           </div>
 
-                          <span style={{ fontSize: '0.75rem', color: textSecondary, fontWeight: 700, minWidth: '40px', textAlign: 'center', fontFamily: 'Outfit, sans-serif' }}>
+                          <span className="text-xs veda-text-muted font-bold min-w-10 text-center font-display">
                             {digestTopicIndex + 1} / {total}
                           </span>
 
                           <button
                             onClick={() => { handleStop(); setDigestTopicIndex((i) => Math.min(total - 1, i + 1)); }}
                             disabled={digestTopicIndex === total - 1}
-                            className="glass-btn digest-nav-btn next"
-                            style={{
-                              background: digestTopicIndex === total - 1
-                                ? (isLight ? 'rgba(0, 0, 0, 0.02)' : 'rgba(255,255,255,0.04)')
-                                : (isLight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255,255,255,0.08)'),
-                              border: digestTopicIndex === total - 1
-                                ? (isLight ? '1px solid rgba(0,0,0,0.04)' : '1px solid rgba(255,255,255,0.05)')
-                                : (isLight ? '1px solid rgba(0, 0, 0, 0.06)' : '1px solid rgba(255, 255, 255, 0.08)'),
-                              color: digestTopicIndex === total - 1 ? (isLight ? '#ccc' : '#555') : (isLight ? '#2c2c2c' : '#ffffff'),
-                              boxShadow: digestTopicIndex === total - 1 ? 'none' : (isLight ? '0 2px 6px rgba(0,0,0,0.03)' : '0 4px 12px rgba(0,0,0,0.2)'),
-                              fontSize: '0.9rem',
-                              width: '32px',
-                              height: '32px',
-                              borderRadius: '10px',
-                            }}
+                            className={cn('glass-btn digest-nav-btn next', digestTopicIndex === total - 1 ? 'veda-digest-nav-disabled' : 'veda-digest-nav-enabled')}
                           >›</button>
                         </div>
                       </div>
                     )
                   })()
                 ) : pageDeck?.images?.length > 0 ? (
-                  // ── Split layout: text explainer + extracted image ─────────────────
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 0.85fr', gap: '1.5rem', alignItems: 'center', width: '100%', height: '100%', minHeight: 0 }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem', overflowY: 'auto', maxHeight: '100%', paddingRight: '0.4rem' }}>
-                      <h2 style={{ margin: 0, color: isLight ? '#111111' : '#fff7ea', fontSize: '1.65rem', lineHeight: 1.25, fontWeight: 800, letterSpacing: '-0.02em' }}>
+                  <div className="grid grid-cols-[1.15fr_0.85fr] gap-6 items-center w-full h-full min-h-0">
+                    <div className="flex flex-col gap-2 overflow-y-auto max-h-full pr-1.5">
+                      <h2 className="m-0 text-[#111111] dark:text-[#fff7ea] text-[1.65rem] leading-tight font-extrabold tracking-tight">
                         {pageDeck?.title || selectedEntry?.title}
                       </h2>
                       {pageDeck?.subtitle && (
-                        <p style={{ color: themeColor, fontSize: '0.94rem', lineHeight: 1.35, margin: 0, fontWeight: 600 }}>
+                        <p className="veda-accent-text text-[0.94rem] leading-snug m-0 font-semibold">
                           {pageDeck.subtitle}
                         </p>
                       )}
                       {pageDeck?.summary && (
-                        <p style={{ color: isLight ? '#444444' : '#ccc2b2', fontSize: '0.88rem', lineHeight: 1.6, margin: '0.4rem 0 0 0' }}>
+                        <p className="text-[#444444] dark:text-[#ccc2b2] text-sm leading-relaxed mt-1.5 mb-0">
                           {pageDeck.summary}
                         </p>
                       )}
                     </div>
 
-                    {/* Extracted high-res image box */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', alignItems: 'center', height: '100%', justifyContent: 'center', minHeight: 0 }}>
+                    <div className="flex flex-col gap-2.5 items-center h-full justify-center min-h-0">
                       <div
                         onClick={() => { setEnlargedImage(pageDeck.images[activeImageIndex]); setEnlargedTitle(pageDeck.title || selectedEntry?.title); }}
-                        style={{
-                          position: 'relative',
-                          width: '100%',
-                          height: '180px',
-                          borderRadius: '16px',
-                          overflow: 'hidden',
-                          border: isLight ? '1px solid #eaebed' : '1px solid rgba(255,255,255,0.05)',
-                          background: isLight ? '#fcfcfa' : '#090a0d',
-                          boxShadow: isLight ? '0 4px 18px rgba(0,0,0,0.03)' : '0 8px 24px rgba(0,0,0,0.3)',
-                          cursor: 'zoom-in',
-                          transition: 'all 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = 'scale(1.025)'
-                          e.currentTarget.style.boxShadow = isLight 
-                            ? '0 12px 30px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.02)' 
-                            : '0 16px 40px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.2)'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = 'scale(1)'
-                          e.currentTarget.style.boxShadow = isLight 
-                            ? '0 4px 18px rgba(0,0,0,0.03)' 
-                            : '0 8px 24px rgba(0,0,0,0.3)'
-                        }}
+                        className="veda-slide-image"
                       >
                         <img
                           src={pageDeck.images[activeImageIndex]}
                           alt="Extracted illustration"
-                          style={{
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'contain',
-                            display: 'block',
-                          }}
+                          className="w-full h-full object-contain block"
                         />
                       </div>
 
                       {pageDeck.images.length > 1 && (
-                        <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
+                        <div className="flex gap-1.5 justify-center">
                           {pageDeck.images.map((img, idx) => (
                             <button
                               key={idx}
                               onClick={() => setActiveImageIndex(idx)}
-                              style={{
-                                width: '28px',
-                                height: '28px',
-                                borderRadius: '6px',
-                                overflow: 'hidden',
-                                border: activeImageIndex === idx ? `2px solid ${themeColor}` : (isLight ? '1px solid #eaebed' : '1px solid rgba(255,255,255,0.1)'),
-                                padding: 0,
-                                cursor: 'pointer',
-                                background: 'transparent',
-                                transition: 'all 0.2s ease',
-                              }}
+                              className={cn(
+                                'w-7 h-7 rounded-md overflow-hidden p-0 cursor-pointer bg-transparent transition-all duration-200',
+                                activeImageIndex === idx
+                                  ? 'border-2 border-veda-accent dark:border-veda-accent-dark'
+                                  : 'border border-veda-border dark:border-white/10'
+                              )}
                             >
-                              <img src={img} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              <img src={img} alt="" className="w-full h-full object-cover" />
                             </button>
                           ))}
                         </div>
@@ -1734,18 +1365,17 @@ export default function RightPanel() {
                     </div>
                   </div>
                 ) : (
-                  // ── Text-only single topic layout ──────────────────────────────────
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', maxWidth: '85%', overflowY: 'auto', maxHeight: '100%', paddingRight: '0.4rem' }}>
-                    <h2 style={{ margin: 0, color: isLight ? '#111111' : '#fff7ea', fontSize: '1.9rem', lineHeight: 1.2, fontWeight: 800, letterSpacing: '-0.02em' }}>
+                  <div className="flex flex-col gap-2.5 max-w-[85%] overflow-y-auto max-h-full pr-1.5">
+                    <h2 className="m-0 text-[#111111] dark:text-[#fff7ea] text-[1.9rem] leading-tight font-extrabold tracking-tight">
                       {pageDeck?.title || selectedEntry?.title}
                     </h2>
                     {pageDeck?.subtitle && (
-                      <p style={{ color: themeColor, fontSize: '1.05rem', lineHeight: 1.4, margin: 0, fontWeight: 600 }}>
+                      <p className="veda-accent-text text-lg leading-snug m-0 font-semibold">
                         {pageDeck.subtitle}
                       </p>
                     )}
                     {pageDeck?.summary && (
-                      <p style={{ color: isLight ? '#444444' : '#e6dccb', fontSize: '0.94rem', lineHeight: 1.6, margin: '0.6rem 0 0 0' }}>
+                      <p className="text-[#444444] dark:text-[#e6dccb] text-[0.94rem] leading-relaxed mt-2.5 mb-0">
                         {pageDeck.summary}
                       </p>
                     )}
@@ -1757,45 +1387,12 @@ export default function RightPanel() {
             {/* Interaction Sidebar (40% width) */}
             <div
               key={state.selectedPage}
-              className="animate-slide-in-right"
-              style={{
-                flex: '0 0 40%',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '1.25rem',
-                height: '100%',
-                paddingBottom: '7.5rem',
-                minHeight: 0,
-              }}
+              className="animate-slide-in-right flex-[0_0_40%] flex flex-col gap-5 h-full pb-[7.5rem] min-h-0"
             >
               {/* Tabbed Insights Card */}
-              <div
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  borderRadius: '24px',
-                  background: cardBg,
-                  border: cardBorder,
-                  overflow: 'hidden',
-                  boxShadow: cardShadow,
-                  transition: 'all 0.3s ease',
-                  minHeight: 0,
-                }}
-              >
+              <div className="veda-card flex-1 flex flex-col rounded-3xl overflow-hidden min-h-0 transition-all duration-300">
                 {/* Tab Header Selector */}
-                <div
-                  style={{
-                    display: 'flex',
-                    background: isLight ? 'rgba(0, 0, 0, 0.03)' : 'rgba(255, 255, 255, 0.03)',
-                    border: isLight ? '1px solid rgba(0, 0, 0, 0.05)' : '1px solid rgba(255, 255, 255, 0.05)',
-                    borderRadius: '999px',
-                    margin: '0.75rem 1rem 0.25rem 1rem',
-                    padding: '3px',
-                    gap: '4px',
-                    transition: 'all 0.3s ease',
-                  }}
-                >
+                <div className="veda-tab-shell">
                   {[
                     { id: 'takeaways', label: 'TAKEAWAYS' },
                     { id: 'notes', label: 'NOTES' },
@@ -1806,20 +1403,7 @@ export default function RightPanel() {
                       <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
-                        className="glass-btn"
-                        style={{
-                          flex: 1,
-                          padding: '0.5rem 1rem',
-                          fontSize: '0.7rem',
-                          letterSpacing: '0.05em',
-                          border: 'none',
-                          borderRadius: '999px',
-                          background: isActive ? (isLight ? '#ffffff' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
-                          color: isActive ? (isLight ? '#111111' : '#ffffff') : '#888880',
-                          boxShadow: isActive ? (isLight ? '0 2px 8px rgba(0,0,0,0.06)' : '0 4px 12px rgba(0,0,0,0.25)') : 'none',
-                          backdropFilter: isActive ? 'blur(8px)' : 'none',
-                          WebkitBackdropFilter: isActive ? 'blur(8px)' : 'none',
-                        }}
+                        className={cn('veda-tab-btn', isActive ? 'veda-tab-btn-active' : 'veda-tab-btn-idle')}
                       >
                         {tab.label}
                       </button>
@@ -1828,42 +1412,30 @@ export default function RightPanel() {
                 </div>
 
                 {/* Tab Content Body */}
-                <div style={{ padding: '1rem', flex: 1, overflowY: 'auto', minHeight: 0 }}>
+                <div className="p-4 flex-1 overflow-y-auto min-h-0">
                   {activeTab === 'takeaways' ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                    <div className="flex flex-col gap-2.5">
                       {(!pageDeck?.highlights || pageDeck.highlights.length === 0) ? (
-                        <p style={{ color: '#888880', fontSize: '0.85rem', margin: 0 }}>No takeaways generated for this page.</p>
+                        <p className="veda-text-muted text-sm m-0">No takeaways generated for this page.</p>
                       ) : (
                         pageDeck.highlights.map((highlight, index) => (
-                          <div
-                            key={`${highlight}-${index}`}
-                            style={{
-                              padding: '0.75rem 1rem',
-                              borderRadius: '12px',
-                              background: isLight ? 'rgba(217, 119, 6, 0.02)' : 'linear-gradient(180deg, rgba(245,166,35,0.06), rgba(255,255,255,0.015))',
-                              border: isLight ? '1px solid rgba(217, 119, 6, 0.08)' : '1px solid rgba(245,166,35,0.07)',
-                              color: isLight ? '#333333' : '#e6decd',
-                              lineHeight: 1.6,
-                              fontSize: '0.86rem',
-                              transition: 'all 0.3s ease',
-                            }}
-                          >
+                          <div key={`${highlight}-${index}`} className="veda-takeaway-item">
                             {highlight}
                           </div>
                         ))
                       )}
                     </div>
                   ) : activeTab === 'notes' ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div className="flex flex-col gap-3">
                       {(!pageDeck?.supportingPoints || pageDeck.supportingPoints.length === 0) ? (
-                        <p style={{ color: '#888880', fontSize: '0.85rem', margin: 0 }}>No detailed notes found for this page.</p>
+                        <p className="veda-text-muted text-sm m-0">No detailed notes found for this page.</p>
                       ) : (
                         pageDeck.supportingPoints.map((point, index) => (
-                          <div key={`${point}-${index}`} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-                            <span style={{ color: themeColor, fontWeight: 700, fontSize: '0.86rem', paddingTop: '0.08rem' }}>
+                          <div key={`${point}-${index}`} className="flex gap-3 items-start">
+                            <span className="veda-accent-text font-bold text-[0.86rem] pt-0.5">
                               {String(index + 1).padStart(2, '0')}
                             </span>
-                            <span style={{ color: isLight ? '#444444' : '#d7d1c2', fontSize: '0.86rem', lineHeight: 1.65 }}>
+                            <span className="text-[#444444] dark:text-[#d7d1c2] text-[0.86rem] leading-relaxed">
                               {point}
                             </span>
                           </div>
@@ -1871,8 +1443,7 @@ export default function RightPanel() {
                       )}
                     </div>
                   ) : (
-                    // Raw extracted source text panel
-                    <div style={{ color: isLight ? '#444444' : '#cfc8ba', fontSize: '0.85rem', lineHeight: 1.7, padding: '0.2rem' }}>
+                    <div className="text-[#444444] dark:text-[#cfc8ba] text-sm leading-relaxed p-1">
                       {pageDeck?.sourceText || 'No extractable text found on this page.'}
                     </div>
                   )}
@@ -1880,44 +1451,17 @@ export default function RightPanel() {
               </div>
 
               {/* Live Karaoke Narration Card */}
-              <div
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  padding: '1.25rem',
-                  borderRadius: '24px',
-                  border: studioBorder,
-                  background: studioBg,
-                  transition: 'all 0.3s ease',
-                  overflow: 'hidden',
-                  minHeight: 0,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isLight ? '1px solid #eaebed' : '1px solid #1e222b', paddingBottom: '0.6rem', marginBottom: '0.75rem', flexShrink: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: themeColor, fontSize: '0.72rem', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700 }}>
-                      AI Narration
-                    </span>
-                  </div>
-                  <span style={{ color: isLight ? '#555555' : '#9d9586', fontSize: '0.72rem', background: isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.04)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
+              <div className="veda-studio-panel flex-1 flex flex-col p-5 transition-all duration-300 overflow-hidden min-h-0">
+                <div className="flex items-center justify-between border-b border-veda-border dark:border-veda-border-dark pb-2.5 mb-3 shrink-0">
+                  <span className="veda-accent-text text-[0.72rem] tracking-widest uppercase font-bold">
+                    AI Narration
+                  </span>
+                  <span className="text-[0.72rem] text-[#555555] dark:text-[#9d9586] bg-black/[0.04] dark:bg-white/[0.04] px-2 py-0.5 rounded-md">
                     {state.wordIndex >= 0 ? `${state.wordIndex + 1}/${words.length}` : `${words.length} words`}
                   </span>
                 </div>
 
-                {/* Live Karaoke Scrollable Container */}
-                <div
-                  style={{
-                    flex: 1,
-                    borderRadius: '16px',
-                    border: isLight ? '1px solid #eaebed' : '1px solid rgba(255,255,255,0.04)',
-                    background: isLight ? 'rgba(0,0,0,0.01)' : 'rgba(255,255,255,0.005)',
-                    padding: '0.75rem',
-                    overflowY: 'auto',
-                    transition: 'all 0.3s ease',
-                    minHeight: 0,
-                  }}
-                >
+                <div className="flex-1 rounded-2xl border border-veda-border dark:border-white/[0.04] bg-black/[0.01] dark:bg-white/[0.005] p-3 overflow-y-auto min-h-0 transition-all duration-300">
                   {renderNarrationScript()}
                 </div>
               </div>
@@ -1929,57 +1473,24 @@ export default function RightPanel() {
 
       {/* Apple-style Unified Persistent Bottom Media Player Dock */}
       {state.selectedPage && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '24px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            width: 'calc(100% - 48px)',
-            maxWidth: '1100px',
-            height: '84px',
-            border: isLight ? '1px solid rgba(0, 0, 0, 0.08)' : '1px solid rgba(255, 255, 255, 0.1)',
-            background: isLight ? 'rgba(255, 255, 255, 0.75)' : 'rgba(19, 21, 26, 0.75)',
-            backdropFilter: 'blur(24px)',
-            borderRadius: '40px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '0.75rem 2rem',
-            flexShrink: 0,
-            transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-            boxShadow: isLight ? '0 10px 30px rgba(0,0,0,0.06)' : '0 20px 50px rgba(0,0,0,0.45)',
-            zIndex: 100,
-          }}
-        >
+        <div className="veda-dock">
           {/* Left section: Talking Avatar & Narration Status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', width: '30%', minWidth: '240px' }}>
+          <div className="flex items-center gap-4 w-[30%] min-w-[240px]">
             <AIAvatar audioElement={activeAudio} state={{ ...state, isAnalyzing }} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-              <span style={{ color: textSecondary, fontSize: '0.74rem', lineHeight: 1.35, fontWeight: 600 }}>
+            <div className="flex flex-col gap-0.5">
+              <span className="veda-text-muted text-[0.74rem] leading-snug font-semibold">
                 {cloudMessage || 'Explanation server active'}
               </span>
             </div>
           </div>
 
           {/* Center section: Media controls & Progress slider */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1, maxWidth: '480px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="flex flex-col items-center flex-1 max-w-[480px]">
+            <div className="flex items-center gap-3">
               <button
                 onClick={handlePlay}
                 disabled={!speechText}
-                className="glass-btn"
-                style={{
-                  width: '42px',
-                  height: '42px',
-                  borderRadius: '50%',
-                  background: state.ttsState !== 'speaking' ? (isLight ? 'rgba(217, 119, 6, 0.16)' : 'rgba(245, 166, 35, 0.22)') : (isLight ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.05)') ,
-                  color: state.ttsState !== 'speaking' ? (isLight ? '#b25e00' : '#ffd27a') : (isLight ? '#b5b5b5' : '#666'),
-                  border: state.ttsState !== 'speaking' ? (isLight ? '1px solid rgba(217, 119, 6, 0.35)' : '1px solid rgba(245, 166, 35, 0.45)') : (isLight ? '1px solid rgba(0, 0, 0, 0.05)' : '1px solid rgba(255, 255, 255, 0.06)'),
-                  boxShadow: state.ttsState !== 'speaking' ? (isLight ? '0 4px 12px rgba(217, 119, 6, 0.12)' : '0 8px 24px rgba(245, 166, 35, 0.25)') : 'none',
-                  fontSize: '0.95rem',
-                  paddingLeft: '3px',
-                }}
+                className={cn('veda-media-btn', isPlayPrimary ? 'veda-media-btn-play' : 'veda-media-btn-play veda-media-btn-play-idle')}
                 title="Play narration"
               >
                 ▶
@@ -1988,17 +1499,7 @@ export default function RightPanel() {
               <button
                 onClick={handlePause}
                 disabled={!speechText || state.ttsState !== 'speaking'}
-                className="glass-btn"
-                style={{
-                  width: '36px',
-                  height: '36px',
-                  borderRadius: '50%',
-                  background: state.ttsState === 'speaking' ? (isLight ? 'rgba(217, 119, 6, 0.16)' : 'rgba(245, 166, 35, 0.22)') : (isLight ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.05)'),
-                  color: state.ttsState === 'speaking' ? (isLight ? '#b25e00' : '#ffd27a') : (isLight ? '#b5b5b5' : '#6d675b'),
-                  border: state.ttsState === 'speaking' ? (isLight ? '1px solid rgba(217, 119, 6, 0.35)' : '1px solid rgba(245, 166, 35, 0.45)') : (isLight ? '1px solid rgba(0, 0, 0, 0.05)' : '1px solid rgba(255, 255, 255, 0.06)'),
-                  boxShadow: state.ttsState === 'speaking' ? (isLight ? '0 4px 12px rgba(217, 119, 6, 0.12)' : '0 8px 24px rgba(245, 166, 35, 0.25)') : 'none',
-                  fontSize: '0.75rem',
-                }}
+                className={cn('veda-media-btn veda-media-btn-round', isPauseActive ? 'veda-media-btn-pause-active' : 'veda-media-btn-muted')}
                 title="Pause narration"
               >
                 ⏸
@@ -2007,17 +1508,7 @@ export default function RightPanel() {
               <button
                 onClick={handleStop}
                 disabled={!speechText || state.ttsState === 'idle'}
-                className="glass-btn"
-                style={{
-                  width: '36px',
-                  height: '36px',
-                  borderRadius: '50%',
-                  background: state.ttsState !== 'idle' ? (isLight ? 'rgba(178, 34, 34, 0.12)' : 'rgba(220, 50, 50, 0.18)') : (isLight ? 'rgba(0, 0, 0, 0.04)' : 'rgba(255, 255, 255, 0.05)'),
-                  color: state.ttsState !== 'idle' ? (isLight ? '#b22222' : '#ff5555') : (isLight ? '#b5b5b5' : '#6d675b'),
-                  border: state.ttsState !== 'idle' ? (isLight ? '1px solid rgba(178, 34, 34, 0.35)' : '1px solid rgba(220, 50, 50, 0.4)') : (isLight ? '1px solid rgba(0, 0, 0, 0.05)' : '1px solid rgba(255, 255, 255, 0.06)'),
-                  boxShadow: state.ttsState !== 'idle' ? (isLight ? '0 4px 12px rgba(178, 34, 34, 0.1)' : '0 8px 24px rgba(220, 50, 50, 0.15)') : 'none',
-                  fontSize: '0.75rem',
-                }}
+                className={cn('veda-media-btn veda-media-btn-round', isStopActive ? 'veda-media-btn-stop-active' : 'veda-media-btn-muted')}
                 title="Stop narration"
               >
                 ⏹
@@ -2025,110 +1516,63 @@ export default function RightPanel() {
             </div>
 
             {/* Progress Slider */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', width: '100%', marginTop: '0.35rem' }}>
-              <span style={{ fontSize: '0.68rem', color: textSecondary, fontWeight: 700, minWidth: '28px', textAlign: 'right' }}>
+            <div className="flex items-center gap-3 w-full mt-1.5">
+              <span className="text-[0.68rem] veda-text-muted font-bold min-w-7 text-right">
                 {state.wordIndex >= 0 ? `${state.wordIndex + 1}` : '0'}
               </span>
               <div
                 onClick={handleProgressBarClick}
-                className="progress-bar-container"
-                style={{
-                  flex: 1,
-                  height: '6px',
-                  borderRadius: '999px',
-                  background: progressBarBg,
-                  overflow: 'hidden',
-                  cursor: 'pointer',
-                  position: 'relative'
-                }}
+                className="progress-bar-container flex-1 h-1.5 rounded-full overflow-hidden cursor-pointer relative bg-black/5 dark:bg-white/10"
               >
                 <div
-                  style={{
-                    width: `${progressPercent}%`,
-                    height: '100%',
-                    background: isLight ? 'linear-gradient(90deg, #d97706 0%, #f5a623 100%)' : 'linear-gradient(90deg, #f5a623 0%, #ffd27a 100%)',
-                    transition: 'width 140ms linear',
-                  }}
+                  className="h-full transition-[width] duration-[140ms] linear bg-gradient-to-r from-veda-accent to-veda-accent-dark dark:from-veda-accent-dark dark:to-[#ffd27a]"
+                  style={{ width: `${progressPercent}%` }}
                 />
               </div>
-              <span style={{ fontSize: '0.68rem', color: textSecondary, fontWeight: 700, minWidth: '28px' }}>
+              <span className="text-[0.68rem] veda-text-muted font-bold min-w-7">
                 {words.length}
               </span>
             </div>
           </div>
 
           {/* Right section: View page, Language, & Speed Rate */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'flex-end', width: '35%', minWidth: '385px' }}>
-            {/* Playback voice selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <span style={{ color: '#888880', fontSize: '0.65rem', fontWeight: 700 }}>VOICE:</span>
+          <div className="flex items-center gap-3 justify-end w-[35%] min-w-[385px]">
+            <div className="flex items-center gap-1.5">
+              <span className="text-veda-muted-dark text-[0.65rem] font-bold">VOICE:</span>
               <select
                 value={selectedVoice}
                 onChange={(e) => setSelectedVoice(e.target.value)}
-                className="glass-select"
-                style={{
-                  backgroundColor: isLight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.05)',
-                  color: themeColor,
-                  border: isLight ? '1px solid rgba(0, 0, 0, 0.06)' : '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '8px',
-                  padding: '0.22rem 1.6rem 0.22rem 0.5rem',
-                  fontSize: '0.7rem',
-                  fontWeight: 700,
-                  outline: 'none',
-                  maxWidth: '120px',
-                  boxShadow: isLight ? '0 1px 4px rgba(0,0,0,0.02)' : '0 2px 8px rgba(0,0,0,0.15)',
-                  backgroundImage: `url('data:image/svg+xml;utf8,<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="${themeColor.replace('#', '%23')}"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>')`,
-                  backgroundRepeat: 'no-repeat',
-                  backgroundPosition: 'right 8px center',
-                  backgroundSize: '12px',
-                }}
+                className="veda-select"
               >
                 {state.language === 'te-IN' ? (
                   <>
-                    <option value="te-IN-ShrutiNeural" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>Shruti (F)</option>
-                    <option value="te-IN-MohanNeural" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>Mohan (M)</option>
+                    <option value="te-IN-ShrutiNeural">Shruti (F)</option>
+                    <option value="te-IN-MohanNeural">Mohan (M)</option>
                   </>
                 ) : (
                   <>
-                    <option value="en-US-AriaNeural" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>Aria (F)</option>
-                    <option value="en-US-JennyNeural" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>Jenny (F)</option>
-                    <option value="en-US-GuyNeural" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>Guy (M)</option>
-                    <option value="en-IN-NeerjaNeural" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>Neerja (F-IN)</option>
+                    <option value="en-US-AriaNeural">Aria (F)</option>
+                    <option value="en-US-JennyNeural">Jenny (F)</option>
+                    <option value="en-US-GuyNeural">Guy (M)</option>
+                    <option value="en-IN-NeerjaNeural">Neerja (F-IN)</option>
                   </>
                 )}
               </select>
             </div>
 
-            {/* Playback speed selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <span style={{ color: '#888880', fontSize: '0.65rem', fontWeight: 700 }}>RATE:</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-veda-muted-dark text-[0.65rem] font-bold">RATE:</span>
               <select
                 value={speechRate}
                 onChange={(e) => setSpeechRate(e.target.value)}
-                className="glass-select"
-                style={{
-                  backgroundColor: isLight ? 'rgba(255, 255, 255, 0.45)' : 'rgba(255, 255, 255, 0.05)',
-                  color: themeColor,
-                  border: isLight ? '1px solid rgba(0, 0, 0, 0.06)' : '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: '8px',
-                  padding: '0.22rem 1.6rem 0.22rem 0.5rem',
-                  fontSize: '0.7rem',
-                  fontWeight: 700,
-                  outline: 'none',
-                  boxShadow: isLight ? '0 1px 4px rgba(0,0,0,0.02)' : '0 2px 8px rgba(0,0,0,0.15)',
-                  backgroundImage: `url('data:image/svg+xml;utf8,<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" stroke="${themeColor.replace('#', '%23')}"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>')`,
-                  backgroundRepeat: 'no-repeat',
-                  backgroundPosition: 'right 8px center',
-                  backgroundSize: '12px',
-                }}
+                className="veda-select"
               >
-                <option value="+0%" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>1.0x</option>
-                <option value="+15%" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>1.2x</option>
-                <option value="+30%" style={{ background: isLight ? '#ffffff' : '#1e222b', color: isLight ? '#2c2c2c' : '#f4f0e7' }}>1.5x</option>
+                <option value="+0%">1.0x</option>
+                <option value="+15%">1.2x</option>
+                <option value="+30%">1.5x</option>
               </select>
             </div>
 
-            {/* Language Selection buttons */}
             {[
               { label: 'EN', value: 'en-US' },
               { label: 'TE', value: 'te-IN' },
@@ -2138,16 +1582,7 @@ export default function RightPanel() {
                 <button
                   key={language.value}
                   onClick={() => handleLanguageChange(language.value)}
-                  className="glass-btn"
-                  style={{
-                    fontSize: '0.7rem',
-                    padding: '0.32rem 0.62rem',
-                    borderRadius: '999px',
-                    background: isActive ? (isLight ? 'rgba(217, 119, 6, 0.16)' : 'rgba(245, 166, 35, 0.22)') : (isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.05)'),
-                    color: isActive ? themeColor : (isLight ? '#555555' : '#cfc6b1'),
-                    border: isActive ? (isLight ? '1px solid rgba(217, 119, 6, 0.35)' : '1px solid rgba(245, 166, 35, 0.45)') : (isLight ? '1px solid rgba(0,0,0,0.05)' : '1px solid rgba(255,255,255,0.06)'),
-                    boxShadow: isActive ? (isLight ? '0 2px 8px rgba(217, 119, 6, 0.1)' : '0 4px 12px rgba(245, 166, 35, 0.15)') : 'none',
-                  }}
+                  className={cn('veda-lang-btn', isActive ? 'veda-lang-btn-active' : 'veda-lang-btn-idle')}
                 >
                   {language.label}
                 </button>
@@ -2157,16 +1592,9 @@ export default function RightPanel() {
             {/* High-resolution PDF view toggle */}
             <button
               onClick={() => setIsOriginalModalOpen(true)}
-              className="glass-btn"
-              style={{
-                fontSize: '0.7rem',
-                padding: '0.35rem 0.75rem',
-                borderRadius: '999px',
-                background: isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.06)',
-                color: isLight ? '#2c2c2c' : '#f4f0e7',
-                border: isLight ? '1px solid rgba(0,0,0,0.05)' : '1px solid rgba(255,255,255,0.08)',
-                boxShadow: isLight ? '0 1px 4px rgba(0,0,0,0.02)' : '0 2px 8px rgba(0,0,0,0.1)',
-              }}
+              className="glass-btn text-[0.7rem] px-3 py-1.5 rounded-full
+                bg-black/[0.03] text-veda-text border border-black/5 shadow-sm
+                dark:bg-white/[0.06] dark:text-veda-text-dark dark:border-white/10 dark:shadow-md"
               title="View original page layout"
             >
               📄 Original Page

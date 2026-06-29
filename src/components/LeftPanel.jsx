@@ -1,5 +1,6 @@
 import { usePDF } from "../context/PDFContext"
 import { extractTOC } from "../utils/pdfUtils"
+import { cn } from "../lib/cn"
 
 export default function LeftPanel() {
   const { state, dispatch } = usePDF()
@@ -41,46 +42,41 @@ export default function LeftPanel() {
     dispatch({ type: "SET_PAGE", payload: item.page })
   }
 
-  const isLight = state.theme === 'light'
-
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        width: "300px",
-        height: "100vh",
-        background: isLight ? "#ffffff" : "#1a1a1a",
-        borderRight: isLight ? "1px solid #eaebed" : "1px solid #2a2a2a",
-        flexShrink: 0,
-        transition: "background 0.3s ease, border-color 0.3s ease"
-      }}
+    <aside
+      className="flex flex-col w-[300px] h-screen shrink-0 border-r transition-colors duration-300
+        bg-white border-veda-border
+        dark:bg-[#1a1a1a] dark:border-[#2a2a2a]"
     >
-      
-      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "1rem", borderBottom: isLight ? "1px solid #eaebed" : "1px solid #2a2a2a" }}>
-        <div style={{ width: "12px", height: "12px", borderRadius: "2px", background: isLight ? "#d97706" : "#f5a623" }} />
-        <span style={{ color: isLight ? "#d97706" : "#f5a623", fontSize: "0.75rem", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>Contents</span>
+      <div className="flex items-center gap-2 p-4 border-b border-veda-border dark:border-[#2a2a2a]">
+        <div className="w-3 h-3 rounded-sm bg-veda-accent dark:bg-veda-accent-dark" />
+        <span className="veda-accent-text text-xs font-semibold tracking-widest uppercase">
+          Contents
+        </span>
       </div>
 
-      <div style={{ padding: "0.75rem" }}>
-        <label style={{ display: "block", width: "100%", padding: "0.6rem", borderRadius: "8px", background: isLight ? "#d97706" : "#f5a623", color: isLight ? "#ffffff" : "#0f0f0f", fontWeight: 600, fontSize: "0.8rem", textAlign: "center", cursor: "pointer", boxShadow: isLight ? "0 2px 8px rgba(217, 119, 6, 0.25)" : "none" }}>
+      <div className="p-3">
+        <label
+          className="block w-full py-2.5 px-3 rounded-lg text-center text-[0.8rem] font-semibold cursor-pointer
+            bg-veda-accent text-white shadow-md shadow-veda-accent/25
+            dark:bg-veda-accent-dark dark:text-veda-surface-dark dark:shadow-none"
+        >
           Upload PDF
-          <input type="file" accept=".pdf" onChange={handleFileChange} style={{ display: "none" }} />
+          <input type="file" accept=".pdf" onChange={handleFileChange} className="hidden" />
         </label>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "0.5rem" }}>
+      <div className="flex-1 overflow-y-auto p-2">
         {state.toc.length === 0 ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: "0.75rem" }}>
-            <div style={{ fontSize: "2rem" }}>📄</div>
-            <p style={{ color: "#888880", fontSize: "0.75rem", textAlign: "center" }}>
+          <div className="flex flex-col items-center justify-center h-full gap-3">
+            <div className="text-[2rem]">📄</div>
+            <p className="veda-text-muted text-xs text-center">
               Upload a PDF to see<br />the table of contents
             </p>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          <div className="flex flex-col gap-0.5">
             {(() => {
-              // Resolve active TOC entry (either exact page or closest preceding page)
               let activeItem = null
               if (state.toc && state.toc.length > 0) {
                 const exact = state.toc.find((item) => item.page === state.selectedPage)
@@ -105,30 +101,24 @@ export default function LeftPanel() {
                   <button
                     key={i}
                     onClick={() => handleClick(item)}
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: "0.75rem",
-                      width: "100%",
-                      padding: "0.6rem 0.75rem",
-                      borderRadius: "6px",
-                      background: isActive 
-                        ? (isLight ? "#fdf6e6" : "#2a2a2a") 
-                        : "transparent",
-                      border: "none",
-                      borderLeft: isActive 
-                        ? (isLight ? "2px solid #d97706" : "2px solid #f5a623") 
-                        : "2px solid transparent",
-                      cursor: "pointer",
-                      textAlign: "left",
-                      marginBottom: "2px",
-                      transition: "all 0.2s ease"
-                    }}
+                    className={cn(
+                      'flex items-start gap-3 w-full py-2.5 px-3 rounded-md border-none text-left mb-0.5 transition-all duration-200 cursor-pointer',
+                      isActive
+                        ? 'bg-veda-accent-soft border-l-2 border-veda-accent dark:bg-[#2a2a2a] dark:border-l-veda-accent-dark'
+                        : 'bg-transparent border-l-2 border-transparent'
+                    )}
                   >
-                    <span style={{ color: isLight ? "#d97706" : "#f5a623", fontSize: "0.7rem", fontWeight: 600, minWidth: "24px", paddingTop: "2px", flexShrink: 0 }}>
+                    <span className="veda-accent-text text-[0.7rem] font-semibold min-w-6 pt-0.5 shrink-0">
                       {item.printedPage ?? item.page}
                     </span>
-                    <span style={{ color: isActive ? (isLight ? "#2c2c2c" : "#e8e8e8") : (isLight ? "#6d6d6d" : "#aaaaaa"), fontSize: "0.8rem", lineHeight: 1.5, wordBreak: "break-word", fontWeight: isActive ? 600 : 400 }}>
+                    <span
+                      className={cn(
+                        'text-[0.8rem] leading-relaxed break-words',
+                        isActive
+                          ? 'veda-text-primary font-semibold'
+                          : 'text-[#6d6d6d] dark:text-[#aaaaaa] font-normal'
+                      )}
+                    >
                       {item.title}
                     </span>
                   </button>
@@ -138,7 +128,6 @@ export default function LeftPanel() {
           </div>
         )}
       </div>
-
-    </div>
+    </aside>
   )
 }

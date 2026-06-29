@@ -64,6 +64,56 @@ VOICE_MAP = {
 
 SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY")
 
+SARVAM_CREDITS_MESSAGE = (
+    "Your Sarvam API credits are exhausted. "
+    "Add credits at dashboard.sarvam.ai to restore TTS, STT, translation, and read-along."
+)
+
+
+class SarvamCreditsExhaustedError(Exception):
+    """Raised when Sarvam API credits or quota are exhausted."""
+
+
+def _sarvam_error_text(body: str) -> str:
+    try:
+        data = json.loads(body)
+        err = data.get("error")
+        if isinstance(err, dict):
+            return f"{err.get('code', '')} {err.get('message', '')}".strip()
+        if isinstance(err, str):
+            return err
+        return str(data.get("message", body))
+    except Exception:
+        return body
+
+
+def is_sarvam_credits_exhausted(status_code: int, body: str) -> bool:
+    if status_code == 402:
+        return True
+    text = _sarvam_error_text(body).lower()
+    keywords = (
+        "credit", "credits", "quota", "balance", "exhausted",
+        "insufficient", "payment required", "billing",
+        "limit exceeded", "no more credit", "out of credit",
+        "usage limit", "subscription",
+    )
+    if status_code in (403, 429) and any(keyword in text for keyword in keywords):
+        return True
+    return False
+
+
+def check_sarvam_response(response: requests.Response) -> None:
+    if is_sarvam_credits_exhausted(response.status_code, response.text):
+        raise SarvamCreditsExhaustedError(SARVAM_CREDITS_MESSAGE)
+    response.raise_for_status()
+
+
+def sarvam_credits_http_exception() -> HTTPException:
+    return HTTPException(
+        status_code=402,
+        detail={"code": "sarvam_credits_exhausted", "message": SARVAM_CREDITS_MESSAGE},
+    )
+
 def get_sarvam_speaker(voice: str, lang: str) -> str:
     voice_lower = voice.lower() if voice else ""
     lang_lower = lang.lower() if lang else ""
@@ -137,9 +187,11 @@ def call_sarvam_tts(text: str, target_lang: str, speaker: str, pace: float) -> b
     print(f"Calling Sarvam TTS API for text of len {len(text)} ({target_lang}, speaker: {speaker}, pace: {pace})...")
     try:
         response = requests.post("https://api.sarvam.ai/text-to-speech", json=payload, headers=headers, timeout=15)
-        response.raise_for_status()
+        check_sarvam_response(response)
     except requests.exceptions.HTTPError as err:
-        print(f"Sarvam HTTP Error: {err.response.text}")
+        if err.response is not None and is_sarvam_credits_exhausted(err.response.status_code, err.response.text):
+            raise SarvamCreditsExhaustedError(SARVAM_CREDITS_MESSAGE) from err
+        print(f"Sarvam HTTP Error: {err.response.text if err.response is not None else err}")
         raise
     data = response.json()
     
@@ -166,7 +218,12 @@ def call_sarvam_stt(audio_bytes: bytes, lang_code: str) -> list[dict]:
     }
     print(f"Calling Sarvam STT API for audio alignment ({lang_code})...")
     response = requests.post("https://api.sarvam.ai/speech-to-text", files=files, data=data, headers=headers, timeout=20)
-    response.raise_for_status()
+    try:
+        check_sarvam_response(response)
+    except requests.exceptions.HTTPError as err:
+        if err.response is not None and is_sarvam_credits_exhausted(err.response.status_code, err.response.text):
+            raise SarvamCreditsExhaustedError(SARVAM_CREDITS_MESSAGE) from err
+        raise
     stt_data = response.json()
     
     word_boundaries = []
@@ -353,6 +410,8 @@ async def generate_sarvam_audio_and_boundaries(text: str, language: str, voice: 
             word_boundaries = generate_fallback_boundaries(text, duration, lead_in, lead_out)
         else:
             word_boundaries = adjust_boundaries_to_silence(word_boundaries, audio_bytes)
+    except SarvamCreditsExhaustedError:
+        raise
     except Exception as stt_err:
         print(f"Sarvam STT failed: {stt_err}. Using fallback heuristic alignment...")
         word_boundaries = generate_fallback_boundaries(text, duration, lead_in, lead_out)
@@ -652,10 +711,15 @@ async def text_to_speech(req: TTSRequest):
         raise HTTPException(status_code=400, detail="Text is required")
 
     try:
+        sarvam_credits_exhausted = False
         if SARVAM_API_KEY:
             print(f"Generating Sarvam TTS for {len(text)} chars (voice: {voice}, rate: {rate})...")
             try:
                 audio_bytes, word_boundaries = await generate_sarvam_audio_and_boundaries(text, language, voice, rate)
+            except SarvamCreditsExhaustedError as sarvam_exc:
+                print(f"Sarvam credits exhausted: {sarvam_exc}. Falling back to edge-tts...")
+                sarvam_credits_exhausted = True
+                audio_bytes, word_boundaries = await generate_audio_and_boundaries(text, voice, rate)
             except Exception as sarvam_exc:
                 print(f"Sarvam TTS generation failed: {sarvam_exc}. Falling back to edge-tts...")
                 audio_bytes, word_boundaries = await generate_audio_and_boundaries(text, voice, rate)
@@ -667,7 +731,8 @@ async def text_to_speech(req: TTSRequest):
         audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
         return {
             "audio": audio_base64,
-            "word_boundaries": word_boundaries
+            "word_boundaries": word_boundaries,
+            "sarvam_credits_exhausted": sarvam_credits_exhausted,
         }
     except Exception as exc:
         print(f"TTS generation failed: {exc}")
@@ -691,6 +756,8 @@ async def text_to_speech_stream(text: str, language: str = "en-US", voice: str =
                     audio_bytes, _ = await generate_sarvam_audio_and_boundaries(text, language, voice, rate)
                     yield audio_bytes
                     return
+                except SarvamCreditsExhaustedError as sarvam_exc:
+                    print(f"Sarvam credits exhausted: {sarvam_exc}. Falling back to edge-tts...")
                 except Exception as sarvam_exc:
                     print(f"Sarvam streaming failed: {sarvam_exc}. Falling back to edge-tts...")
             
@@ -719,11 +786,16 @@ async def text_to_speech_boundaries(req: TTSRequest):
     try:
         word_boundaries = []
         use_fallback = False
+        sarvam_credits_exhausted = False
         
         if SARVAM_API_KEY:
             print(f"Generating Sarvam boundaries for {len(text)} chars (voice: {voice}, rate: {rate})...")
             try:
                 _, word_boundaries = await generate_sarvam_audio_and_boundaries(text, language, voice, rate)
+            except SarvamCreditsExhaustedError as sarvam_exc:
+                print(f"Sarvam credits exhausted: {sarvam_exc}. Falling back to edge-tts...")
+                sarvam_credits_exhausted = True
+                use_fallback = True
             except Exception as sarvam_exc:
                 print(f"Sarvam boundaries failed: {sarvam_exc}. Falling back to edge-tts...")
                 use_fallback = True
@@ -741,7 +813,10 @@ async def text_to_speech_boundaries(req: TTSRequest):
                         "end": (chunk["offset"] + chunk["duration"]) / 10000000.0
                     })
         print(f"TTS boundary generation successful: {len(word_boundaries)} words")
-        return {"word_boundaries": word_boundaries}
+        return {
+            "word_boundaries": word_boundaries,
+            "sarvam_credits_exhausted": sarvam_credits_exhausted,
+        }
     except Exception as exc:
         print(f"TTS boundary generation failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -783,13 +858,15 @@ def translate_strings_sarvam(texts: list[str], api_key: str) -> list[str]:
     
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=15)
-        response.raise_for_status()
+        check_sarvam_response(response)
         translated_combined = response.json()["translated_text"]
         translated_texts = re.split(r'\s*\|#\|\s*', translated_combined)
         if len(translated_texts) == len(texts):
             return [t.strip() for t in translated_texts]
         else:
             print(f"Translation split mismatch: got {len(translated_texts)}, expected {len(texts)}. Translating individually...")
+    except SarvamCreditsExhaustedError:
+        raise
     except Exception as e:
         print(f"Batch translation failed: {e}. Translating individually...")
         
@@ -798,8 +875,10 @@ def translate_strings_sarvam(texts: list[str], api_key: str) -> list[str]:
         try:
             payload["input"] = t
             response = requests.post(url, json=payload, headers=headers, timeout=10)
-            response.raise_for_status()
+            check_sarvam_response(response)
             translated_texts.append(response.json()["translated_text"].strip())
+        except SarvamCreditsExhaustedError:
+            raise
         except Exception as err:
             print(f"Failed to translate '{t}': {err}")
             translated_texts.append(t)
@@ -839,6 +918,8 @@ def translate_deck(req: TranslateDeckRequest):
     try:
         print("Translating deck fields into Telugu via Sarvam Translation API...")
         return translate_deck_fields(req.deck)
+    except SarvamCreditsExhaustedError:
+        raise sarvam_credits_http_exception()
     except Exception as exc:
         print(f"Deck translation failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -855,6 +936,7 @@ def analyze_text(req: AnalyzeRequest):
         
         # We always generate the semantic structure in English first for high accuracy
         analysis = analyze_text_semantic(text, is_digest=req.is_digest, language="en-US")
+        sarvam_credits_exhausted = False
         
         # If Telugu is selected, translate slide text + narration via Sarvam
         if req.language == "te-IN" and SARVAM_API_KEY:
@@ -879,11 +961,17 @@ def analyze_text(req: AnalyzeRequest):
                         topic["narration_te"] = combined
 
                 print("Translation to Telugu complete.")
+            except SarvamCreditsExhaustedError as trans_err:
+                sarvam_credits_exhausted = True
+                print(f"Translation to Telugu failed — Sarvam credits exhausted: {trans_err}")
             except Exception as trans_err:
                 print(f"Translation to Telugu failed: {trans_err}.")
         elif req.language == "te-IN":
             print("Telugu requested but SARVAM_API_KEY is not set — slide text stays in English.")
         
+        if sarvam_credits_exhausted:
+            analysis["sarvam_credits_exhausted"] = True
+
         print("Local LLM analysis successful")
         return analysis
     except Exception as exc:
