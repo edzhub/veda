@@ -769,6 +769,45 @@ export async function fetchSemanticAnalysis(sourceText, fallbackTitle = '', isDi
   return null
 }
 
+export async function fetchTeluguDeck(deck) {
+  if (!deck) return null
+
+  try {
+    const apiBase = import.meta.env.VITE_LAYOUT_API_URL || 'http://127.0.0.1:8765'
+    const response = await fetch(`${apiBase}/translate_deck`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deck }),
+    })
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}))
+      console.warn('Telugu deck translation failed:', errData.detail || response.status)
+      return null
+    }
+
+    const translated = await response.json()
+    const mergedTopics = Array.isArray(translated.topics)
+      ? translated.topics.map((topic, idx) => ({
+        ...topic,
+        body: topic.body || topic.summary || '',
+        image: deck.topics?.[idx]?.image || topic.image || null,
+      }))
+      : deck.topics
+
+    return {
+      ...deck,
+      ...translated,
+      topics: mergedTopics || deck.topics,
+      images: deck.images || translated.images,
+      isTelugu: true,
+    }
+  } catch (err) {
+    console.warn('Telugu deck translation unavailable:', err)
+    return null
+  }
+}
+
 export async function extractPagePresentation(pdfDoc, pageNumber, fallbackTitle = '') {
   if (!pageNumber || pageNumber < 1 || pageNumber > pdfDoc.numPages) {
     return null

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePDF } from '../context/PDFContext'
-import { extractPagePresentation, extractPageText, fetchSemanticAnalysis } from '../utils/pdfUtils'
+import { extractPagePresentation, extractPageText, fetchSemanticAnalysis, fetchTeluguDeck } from '../utils/pdfUtils'
 import { requestCloudTTS, requestCloudTTSBoundaries, getTTSStreamUrl, supportsCloudTTS } from '../utils/speechUtils'
 import AIAvatar from './AIAvatar'
 
@@ -83,6 +83,78 @@ function getProgressPercent(wordIndex, totalWords) {
   }
 
   return Math.min(100, ((wordIndex + 1) / totalWords) * 100)
+}
+
+function mergeSemanticDeck(deck, semanticData) {
+  if (!semanticData) return deck
+
+  const mergedIsDigest = deck.isDigest || !!semanticData.isDigest
+  const mergedTopics =
+    (semanticData.isDigest && semanticData.topics)
+      ? semanticData.topics.map((t, idx) => ({
+        ...t,
+        body: t.body || t.summary || '',
+        image: deck.topics[idx]?.image || null
+      }))
+      : deck.topics
+  const mergedNarration =
+    mergedIsDigest
+      ? (semanticData.isDigest && semanticData.narration ? semanticData.narration : deck.narration)
+      : semanticData.narration
+
+  const mergedHighlights = mergedIsDigest
+    ? (semanticData.isDigest && semanticData.highlights && semanticData.highlights.length > 0
+      ? semanticData.highlights
+      : mergedTopics.map((t) => `${t.title}: ${t.body || t.summary || ''}`))
+    : semanticData.highlights
+
+  const mergedSupportingPoints = mergedIsDigest
+    ? (semanticData.isDigest && semanticData.supportingPoints && semanticData.supportingPoints.length > 0
+      ? semanticData.supportingPoints
+      : mergedTopics.map((t) => t.body || t.summary || ''))
+    : semanticData.supportingPoints
+
+  const mergedNarrationTe =
+    mergedIsDigest
+      ? (semanticData.isDigest && semanticData.narration_te ? semanticData.narration_te : deck.narration_te)
+      : semanticData.narration_te
+
+  return {
+    ...deck,
+    title: semanticData.title,
+    subtitle: semanticData.subtitle,
+    summary: semanticData.summary,
+    highlights: mergedHighlights,
+    supportingPoints: mergedSupportingPoints,
+    narration: mergedNarration,
+    narration_te: mergedNarrationTe,
+    topics: mergedTopics,
+    isDigest: mergedIsDigest,
+    isSemantic: true
+  }
+}
+
+function getSpeechText(deck, language, pageText, digestTopicIndex = 0) {
+  if (!deck) return pageText || ''
+
+  if (deck.isDigest) {
+    const topics = deck.topics || []
+    const activeTopic = topics[digestTopicIndex]
+    if (!activeTopic) return ''
+
+    if (language === 'te-IN') {
+      return activeTopic.narration_te
+        || `${activeTopic.title || ''}. ${activeTopic.summary || activeTopic.body || ''}`.replace(/\s+/g, ' ').trim()
+    }
+    const title = activeTopic.title || ''
+    const body = activeTopic.summary || activeTopic.body || ''
+    return `${title}. ${body}`.replace(/\s+/g, ' ').trim()
+  }
+
+  if (language === 'te-IN') {
+    return deck.narration_te || deck.narration || pageText || ''
+  }
+  return deck.narration || pageText || ''
 }
 
 
@@ -397,25 +469,10 @@ export default function RightPanel() {
     }
   }, [state.language])
 
-  const speechText = useMemo(() => {
-    if (pageDeck?.isDigest) {
-      const topics = pageDeck.topics || []
-      const activeTopic = topics[digestTopicIndex]
-      if (activeTopic) {
-        if (state.language === 'te-IN' && activeTopic.narration_te) {
-          return activeTopic.narration_te
-        }
-        const title = activeTopic.title || ''
-        const body = activeTopic.summary || activeTopic.body || ''
-        return `${title}. ${body}`.replace(/\s+/g, ' ').trim()
-      }
-      return ''
-    }
-    if (state.language === 'te-IN' && pageDeck?.narration_te) {
-      return pageDeck.narration_te
-    }
-    return pageDeck?.narration || state.pageText
-  }, [pageDeck, digestTopicIndex, state.language, state.pageText])
+  const speechText = useMemo(
+    () => getSpeechText(pageDeck, state.language, state.pageText, digestTopicIndex),
+    [pageDeck, digestTopicIndex, state.language, state.pageText]
+  )
 
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [pendingSemanticDeck, setPendingSemanticDeck] = useState(null)
@@ -597,23 +654,7 @@ export default function RightPanel() {
 
     // Helper to get narration text for a deck
     function getNarrationText(deck) {
-      if (deck?.isDigest) {
-        const topics = deck.topics || []
-        const activeTopic = topics[0]
-        if (activeTopic) {
-          if (state.language === 'te-IN' && activeTopic.narration_te) {
-            return activeTopic.narration_te
-          }
-          const title = activeTopic.title || ''
-          const body = activeTopic.summary || activeTopic.body || ''
-          return `${title}. ${body}`.replace(/\s+/g, ' ').trim()
-        }
-        return ''
-      }
-      if (state.language === 'te-IN' && deck?.narration_te) {
-        return deck.narration_te
-      }
-      return deck?.narration || deck?.sourceText || ''
+      return getSpeechText(deck, state.language, deck?.sourceText || '', 0)
     }
 
     async function runPreload() {
@@ -832,10 +873,10 @@ export default function RightPanel() {
       return undefined
     }
 
-    // Return cached page deck instantly if it exists
+    // Return cached page deck instantly if analysis or Telugu translation is complete
     const cacheKey = `${state.selectedPage}_${state.language}`
-    if (pageCacheRef.current[cacheKey]) {
-      const cachedDeck = pageCacheRef.current[cacheKey]
+    const cachedDeck = pageCacheRef.current[cacheKey]
+    if (cachedDeck?.isSemantic || cachedDeck?.isTelugu) {
       handleStop()
       dispatch({ type: 'SET_PAGE_TEXT', payload: cachedDeck.sourceText || '' })
       setPageDeck(cachedDeck)
@@ -844,6 +885,44 @@ export default function RightPanel() {
       setPendingSemanticDeck(null)
       setActiveBoundaries([])
       return undefined
+    }
+
+    // Fast path: translate existing deck to Telugu (works even when local LLM is unavailable)
+    if (state.language === 'te-IN') {
+      const enCacheKey = `${state.selectedPage}_en-US`
+      const sourceDeck = pageCacheRef.current[enCacheKey] || pageDeckRef.current
+      if (sourceDeck && (sourceDeck.title || sourceDeck.topics?.length)) {
+        let isCancelled = false
+        setIsPreparing(false)
+        setIsAnalyzing(true)
+        setPendingSemanticDeck(null)
+        setActiveBoundaries([])
+        handleStop()
+        setPageDeck(sourceDeck)
+
+        fetchTeluguDeck(sourceDeck)
+          .then((translatedDeck) => {
+            if (isCancelled || !translatedDeck) {
+              setIsAnalyzing(false)
+              return
+            }
+            setIsAnalyzing(false)
+            setPageCache((prev) => ({ ...prev, [cacheKey]: translatedDeck }))
+            if (ttsStateRef.current === 'idle') {
+              setPageDeck(translatedDeck)
+            } else {
+              setPendingSemanticDeck(translatedDeck)
+            }
+          })
+          .catch((err) => {
+            console.error('Telugu translation error:', err)
+            setIsAnalyzing(false)
+          })
+
+        return () => {
+          isCancelled = true
+        }
+      }
     }
 
     let isCancelled = false
@@ -903,76 +982,30 @@ export default function RightPanel() {
         dispatch({ type: 'SET_PAGE_TEXT', payload: pageText })
         setPageDeck(deck)
         setIsPreparing(false)
-        const cacheKey = `${state.selectedPage}_${state.language}`
-        setPageCache((prev) => ({ ...prev, [cacheKey]: deck }))
 
         // Kick off semantic analysis in the background
         setIsAnalyzing(true)
         fetchSemanticAnalysis(deck.sourceText, deck.title, deck.isDigest, state.language)
-          .then((semanticData) => {
+          .then(async (semanticData) => {
             if (isCancelled) return
-            setIsAnalyzing(false)
-            if (!semanticData) return
 
-            // ── Protect digest pages from LLM single-topic override ──────────
-            // If heuristics already flagged this as a digest, the LLM cannot
-            // un-digest it. We only allow the LLM to UPGRADE (false → true), not
-            // downgrade (true → false).
-            const mergedIsDigest = deck.isDigest || !!semanticData.isDigest
-
-            // For digest pages, keep the heuristic topics + narration unless the
-            // LLM specifically returned a richer digest response.
-            const mergedTopics =
-              (semanticData.isDigest && semanticData.topics)
-                ? semanticData.topics.map((t, idx) => ({
-                  ...t,
-                  body: t.body || t.summary || '',
-                  image: deck.topics[idx]?.image || null
-                }))
-                : deck.topics
-            const mergedNarration =
-              mergedIsDigest
-                ? (semanticData.isDigest && semanticData.narration ? semanticData.narration : deck.narration)
-                : semanticData.narration
-
-            const mergedHighlights = mergedIsDigest
-              ? (semanticData.isDigest && semanticData.highlights && semanticData.highlights.length > 0
-                ? semanticData.highlights
-                : mergedTopics.map((t) => `${t.title}: ${t.body || t.summary || ''}`))
-              : semanticData.highlights
-
-            const mergedSupportingPoints = mergedIsDigest
-              ? (semanticData.isDigest && semanticData.supportingPoints && semanticData.supportingPoints.length > 0
-                ? semanticData.supportingPoints
-                : mergedTopics.map((t) => t.body || t.summary || ''))
-              : semanticData.supportingPoints
-
-            const mergedNarrationTe =
-              mergedIsDigest
-                ? (semanticData.isDigest && semanticData.narration_te ? semanticData.narration_te : deck.narration_te)
-                : semanticData.narration_te
-
-            const mergedDeck = {
-              ...deck,
-              title: semanticData.title,
-              subtitle: semanticData.subtitle,
-              summary: semanticData.summary,
-              highlights: mergedHighlights,
-              supportingPoints: mergedSupportingPoints,
-              narration: mergedNarration,
-              narration_te: mergedNarrationTe,
-              topics: mergedTopics,
-              isDigest: mergedIsDigest,
-              isSemantic: true
+            let finalDeck = null
+            if (semanticData) {
+              finalDeck = mergeSemanticDeck(deck, semanticData)
+            } else if (state.language === 'te-IN') {
+              finalDeck = await fetchTeluguDeck(deck)
             }
 
-            const cacheKey = `${state.selectedPage}_${state.language}`
-            setPageCache((prev) => ({ ...prev, [cacheKey]: mergedDeck }))
+            setIsAnalyzing(false)
+            if (!finalDeck || isCancelled) return
+
+            const semanticCacheKey = `${state.selectedPage}_${state.language}`
+            setPageCache((prev) => ({ ...prev, [semanticCacheKey]: finalDeck }))
 
             if (ttsStateRef.current === 'idle') {
-              setPageDeck(mergedDeck)
+              setPageDeck(finalDeck)
             } else {
-              setPendingSemanticDeck(mergedDeck)
+              setPendingSemanticDeck(finalDeck)
             }
           })
           .catch((err) => {

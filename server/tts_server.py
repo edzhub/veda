@@ -420,6 +420,16 @@ active_doc = None
 active_analyzer = None
 active_doc_lock = threading.Lock()
 
+MIN_MODEL_BYTES = 50 * 1024 * 1024  # reject truncated/corrupt GGUF files
+
+def resolve_model_path(model_paths: list[Path]) -> Path | None:
+    for path in model_paths:
+        if path.exists() and path.stat().st_size >= MIN_MODEL_BYTES:
+            return path
+        if path.exists():
+            print(f"Skipping corrupt/incomplete model at {path} ({path.stat().st_size} bytes)")
+    return None
+
 # Shared LLM state
 def get_selected_model_info() -> tuple[str, str, list[Path]]:
     size = os.environ.get("LOCAL_LLM_SIZE", "0.5B").strip().upper()
@@ -435,8 +445,6 @@ def get_selected_model_info() -> tuple[str, str, list[Path]]:
         
     model_paths = [
         BASE_DIR / "models" / filename,
-        Path(f"C:/Users/eakes/.gemini/antigravity-ide/brain/c37866b0-e84b-4655-a592-33e7bc7ddd61/scratch/models/{filename}"),
-        Path(f"C:/Users/eakes/.gemini/antigravity/models/{filename}")
     ]
     return filename, url, model_paths
 
@@ -452,11 +460,7 @@ class LLMState:
 
         filename, url, model_paths = get_selected_model_info()
 
-        found_path = None
-        for path in model_paths:
-            if path.exists():
-                found_path = path
-                break
+        found_path = resolve_model_path(model_paths)
 
         if not found_path:
             if cls._model_downloading:
@@ -607,6 +611,9 @@ class AnalyzeRequest(BaseModel):
     text: str
     is_digest: bool = False
     language: str = "en-US"
+
+class TranslateDeckRequest(BaseModel):
+    deck: dict
 
 class TranscribeRequest(BaseModel):
     audio: str
@@ -798,6 +805,44 @@ def translate_strings_sarvam(texts: list[str], api_key: str) -> list[str]:
             translated_texts.append(t)
     return translated_texts
 
+def translate_deck_fields(deck: dict) -> dict:
+    if not SARVAM_API_KEY:
+        raise ValueError("SARVAM_API_KEY is not set")
+
+    translated_deck = json.loads(json.dumps(deck))
+    string_paths: list[tuple[list, str]] = []
+    extract_strings(translated_deck, string_paths)
+    if not string_paths:
+        return translated_deck
+
+    texts_to_translate = [text for _, text in string_paths]
+    translated_texts = translate_strings_sarvam(texts_to_translate, SARVAM_API_KEY)
+    for (path, _), trans_val in zip(string_paths, translated_texts):
+        set_by_path(translated_deck, path, trans_val)
+
+    if translated_deck.get("narration"):
+        translated_deck["narration_te"] = translated_deck["narration"]
+    for topic in translated_deck.get("topics", []):
+        title = topic.get("title", "")
+        body = topic.get("summary", topic.get("body", ""))
+        combined = f"{title}. {body}".strip()
+        if combined:
+            topic["narration_te"] = combined
+
+    translated_deck["isTelugu"] = True
+    return translated_deck
+
+@app.post("/translate_deck")
+def translate_deck(req: TranslateDeckRequest):
+    if not SARVAM_API_KEY:
+        raise HTTPException(status_code=400, detail="SARVAM_API_KEY is not set")
+    try:
+        print("Translating deck fields into Telugu via Sarvam Translation API...")
+        return translate_deck_fields(req.deck)
+    except Exception as exc:
+        print(f"Deck translation failed: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
 @app.post("/analyze")
 def analyze_text(req: AnalyzeRequest):
     text = req.text.strip()
@@ -811,37 +856,33 @@ def analyze_text(req: AnalyzeRequest):
         # We always generate the semantic structure in English first for high accuracy
         analysis = analyze_text_semantic(text, is_digest=req.is_digest, language="en-US")
         
-        # If Telugu is selected and Sarvam API is active, translate only the narration fields into Telugu
+        # If Telugu is selected, translate slide text + narration via Sarvam
         if req.language == "te-IN" and SARVAM_API_KEY:
-            print("Translating only narration fields into Telugu via Sarvam Translation API...")
+            print("Translating slide content into Telugu via Sarvam Translation API...")
             try:
-                texts_to_translate = []
-                mappings = [] # list of tuples: (dict_ref, key_to_set)
-                
-                # 1. Single-topic narration
-                eng_narration = analysis.get("narration")
-                if eng_narration:
-                    texts_to_translate.append(eng_narration)
-                    mappings.append((analysis, "narration_te"))
-                
-                # 2. Digest topics narration
-                if "topics" in analysis:
-                    for t in analysis["topics"]:
-                        title = t.get("title", "")
-                        body = t.get("summary", t.get("body", ""))
-                        combined = f"{title}. {body}".strip()
-                        if combined:
-                            texts_to_translate.append(combined)
-                            mappings.append((t, "narration_te"))
-                
-                if texts_to_translate:
+                string_paths: list[tuple[list, str]] = []
+                extract_strings(analysis, string_paths)
+                if string_paths:
+                    texts_to_translate = [text for _, text in string_paths]
                     translated = translate_strings_sarvam(texts_to_translate, SARVAM_API_KEY)
-                    for (obj, key), trans_val in zip(mappings, translated):
-                        obj[key] = trans_val
-                        
-                print("Narration translation to Telugu complete.")
+                    for (path, _), trans_val in zip(string_paths, translated):
+                        set_by_path(analysis, path, trans_val)
+
+                # narration_te for karaoke/TTS (fields are already Telugu after in-place translation)
+                if analysis.get("narration"):
+                    analysis["narration_te"] = analysis["narration"]
+                for topic in analysis.get("topics", []):
+                    title = topic.get("title", "")
+                    body = topic.get("summary", topic.get("body", ""))
+                    combined = f"{title}. {body}".strip()
+                    if combined:
+                        topic["narration_te"] = combined
+
+                print("Translation to Telugu complete.")
             except Exception as trans_err:
-                print(f"Narration translation to Telugu failed: {trans_err}.")
+                print(f"Translation to Telugu failed: {trans_err}.")
+        elif req.language == "te-IN":
+            print("Telugu requested but SARVAM_API_KEY is not set — slide text stays in English.")
         
         print("Local LLM analysis successful")
         return analysis
@@ -1050,13 +1091,12 @@ async def transcribe_audio(req: TranscribeRequest):
 
 def start_model_download() -> None:
     filename, url, model_paths = get_selected_model_info()
-    
-    for path in model_paths:
-        if path.exists():
-            print(f"Model already exists at {path}")
-            return
 
-    target_dir = Path("C:/Users/eakes/.gemini/antigravity/models")
+    if resolve_model_path(model_paths):
+        print("Valid local LLM model already present.")
+        return
+
+    target_dir = BASE_DIR / "models"
     target_dir.mkdir(parents=True, exist_ok=True)
     target_path = target_dir / filename
 

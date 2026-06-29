@@ -1,0 +1,160 @@
+# Veda — AI-Powered PDF to Interactive Presentation Web App
+# Cursor Rules File — paste this in project root as .cursorrules
+
+## What This Project Is
+Veda converts any uploaded PDF into an interactive narrated presentation with
+karaoke-style word highlighting. The user uploads a PDF, the backend extracts
+layout per page, a local LLM generates slide JSON (title, subtitle, summary,
+highlights, narration), and Sarvam AI handles TTS + STT for word-level timestamps.
+The mascot is Zoro — a cartoon elephant avatar (New_Zoro.png) to be animated via
+HeyGen Talking Photo API.
+
+---
+
+## Project Structure
+
+```
+veda/
+  server/
+    tts_server.py         ← Main FastAPI backend (single file, 1083 lines)
+    .env                  ← API keys (SARVAM_API_KEY, OPENAI_API_KEY)
+    vendor/               ← pip-installed packages (edge-tts, fastapi, etc.)
+    models/               ← Local GGUF model files (Qwen2.5)
+    active_doc.pdf        ← Currently loaded PDF (written on upload)
+
+  src/
+    App.jsx               ← Root React component
+    main.jsx              ← Vite entry point
+    index.css
+    components/
+      AIAvatar.jsx        ← Animated avatar component (to be replaced by Zoro video)
+      LeftPanel.jsx       ← PDF TOC sidebar
+      RightPanel.jsx      ← Main presentation + karaoke (2100+ lines)
+    context/
+      PDFContext.jsx      ← useReducer + Context API for global state
+    utils/
+      pdfUtils.js         ← PDF.js utilities
+      speechUtils.js      ← Speech/audio utilities
+```
+
+---
+
+## Backend — tts_server.py (FastAPI, port 8765)
+
+### API Endpoints
+| Method | Path | What it does |
+|--------|------|--------------|
+| GET | /health | Health check |
+| POST | /upload_pdf | Accepts raw PDF bytes, saves as active_doc.pdf, opens with PyMuPDF |
+| GET | /page_layout?page=N | Returns { width, height, lines[], images[] } for page N |
+| POST | /analyze | Runs local LLM on extracted text, returns slide JSON |
+| POST | /tts | Sarvam TTS → returns { audio (base64 WAV), word_boundaries[] } |
+| GET | /tts_stream | Streams audio (Sarvam or edge-tts fallback) |
+| POST | /tts_boundaries | Returns only word_boundaries (no audio) |
+| POST | /transcribe | OpenAI Whisper STT → returns { text, word_boundaries[] } |
+
+### Key Classes & Functions
+- `SarvamMemoryCache` — in-memory single-entry cache (text+lang+voice+rate as key)
+- `LLMState` — singleton for llama-cpp Qwen model, lazy-loads on first /analyze call
+- `PDFMetadataAnalyzer` — detects repeating headers/footers across pages to filter them
+- `detect_speech_boundaries(wav_bytes)` — finds lead-in/lead-out silence in WAV
+- `adjust_boundaries_to_silence(boundaries, wav_bytes)` — corrects STT timestamps for Sarvam's 150-570ms padding
+- `generate_fallback_boundaries(text, duration)` — proportional timestamp fallback if STT fails
+- `analyze_text_semantic(text, is_digest, language)` — calls Qwen LLM, parses JSON response with auto-repair
+- `translate_strings_sarvam(texts, api_key)` — batch translates to Telugu via Sarvam Translate API
+
+### LLM Config
+- Default model: Qwen2.5-0.5B-Instruct (GGUF, Q4_K_M quantization)
+- Model size controlled by env var `LOCAL_LLM_SIZE` (0.5B / 1.5B / 3B)
+- Loaded via llama-cpp-python with n_ctx=2048, n_threads=min(8, cpu_count)
+- Model paths checked: server/models/, C:/Users/eakes/.gemini/... (hardcoded, needs fixing for GPU server)
+- JSON auto-repair built in (_extract_json) because small models produce malformed JSON
+
+### Translation
+- Currently uses Sarvam Translate API (batch mode with |#| delimiter)
+- Only narration fields are translated, not titles/bullets
+- Target: replace with IndicTrans2 (better contextual quality, free, runs on GPU server)
+
+### Known Issues / Things to Watch
+1. Model path has hardcoded `C:/Users/eakes/` paths — must be updated for GPU server deployment
+2. LLMState loads model with n_gpu_layers=0 (CPU only) — needs `n_gpu_layers=-1` for GPU server
+3. SarvamMemoryCache is single-entry only — second unique request evicts the first
+4. /transcribe uses OpenAI Whisper API (costs money) — Sarvam STT used for karaoke instead
+5. CORS is wide open (allow_origins=["*"]) — fine for demo, restrict before production
+
+---
+
+## Frontend — React 19 + Vite
+
+### State Management
+- Global state via useReducer + Context API in PDFContext.jsx
+- No Redux, no Zustand
+
+### Key Components
+- `RightPanel.jsx` — 2100+ lines, handles slide rendering, karaoke highlighting, audio playback, language toggle
+- `LeftPanel.jsx` — TOC sidebar, PDF upload trigger
+- `AIAvatar.jsx` — currently a static animated SVG/CSS avatar (Veda robot), to be replaced by Zoro video
+
+### PDF Processing Flow
+1. User uploads PDF in LeftPanel
+2. Frontend sends raw bytes to POST /upload_pdf
+3. Frontend calls GET /page_layout?page=N for each page
+4. For each page, frontend calls POST /analyze with extracted text
+5. LLM returns slide JSON → rendered as slide card in RightPanel
+6. On play: POST /tts → gets audio + word_boundaries → karaoke starts
+
+---
+
+## Karaoke Sync — How It Works
+Sarvam TTS does NOT return word timestamps natively. Two-step pipeline:
+1. POST to Sarvam TTS → get WAV audio
+2. POST that audio to Sarvam STT → get word-level timestamps
+3. detect_speech_boundaries() measures actual silence padding in WAV
+4. adjust_boundaries_to_silence() rescales STT timestamps to match real audio
+5. If STT returns chunked segments instead of words → fallback to proportional heuristic
+
+---
+
+## Environment Variables (.env)
+```
+SARVAM_API_KEY=your_key_here
+OPENAI_API_KEY=your_key_here   # Optional, only for /transcribe endpoint
+LOCAL_LLM_SIZE=0.5B            # Options: 0.5B, 1.5B, 3B
+```
+
+---
+
+## Planned Upgrades (In Progress)
+1. **LLM upgrade** — Qwen2.5 14B or Mistral 7B on GPU server (change model path + add n_gpu_layers=-1)
+2. **Translation** — Replace Sarvam Translate with IndicTrans2 (AI4Bharat, open source, GPU server)
+3. **Image upscaling** — Add Real-ESRGAN as /upscale_image endpoint on GPU server
+4. **Zoro avatar video** — HeyGen Talking Photo API (New_Zoro.png + Sarvam audio → talking video)
+5. **Video caching** — Cache by slide_id + language key, serve from /videos/{filename}
+
+---
+
+## GPU Server Setup (RDP + SSH)
+- Server IP: 10.0.0.8 (internal network), user: ads_eng5
+- SSH now enabled and running (OpenSSH Server service: Running)
+- Connect from laptop: ssh ads_eng5@10.0.0.8
+- Cursor Remote SSH: Ctrl+Shift+P → "Remote SSH: Connect to Host" → ads_eng5@10.0.0.8
+- All heavy models (LLM, IndicTrans2, Real-ESRGAN) should run on this server
+- FastAPI backend should also run on this server, frontend can stay local or be deployed
+
+---
+
+## Demo Deployment Goal
+- Deploy on a trial/demo website to show all features working end to end
+- Priority: PDF upload → slide generation → TTS karaoke → Telugu translation
+- Secondary: Zoro avatar video via HeyGen (can be demoed separately if not ready)
+
+---
+
+## Coding Preferences
+- Python 3.11 on backend (server runs Python 3.11 based on .pyc files)
+- No unnecessary new dependencies — use what's already in vendor/
+- Keep endpoints simple and RESTful
+- Async where possible (FastAPI async def)
+- Print statements for logging (no logging module needed for now)
+- Frontend: functional components, hooks only, no class components
+- Never use HTML <form> tags in React — use onClick handlers instead
