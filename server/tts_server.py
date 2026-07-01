@@ -531,7 +531,7 @@ class LLMState:
         from llama_cpp import Llama
         n_threads = min(8, os.cpu_count() or 4)
         print(f"Loading Qwen LLM model from {found_path} with {n_threads} threads...")
-        cls._llm = Llama(model_path=str(found_path), n_ctx=2048, n_threads=n_threads, verbose=False)
+        cls._llm = Llama(model_path=str(found_path), n_ctx=4096, n_threads=n_threads, verbose=False)
         print("Model loaded successfully.")
         return cls._llm
 
