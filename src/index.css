@@ -123,9 +123,9 @@
   }
 
   .veda-studio-panel {
-    @apply rounded-3xl border overflow-hidden
+    @apply rounded-3xl border overflow-hidden shadow-sm
       bg-gradient-to-b from-white to-[#fcfbf9] border-veda-border
-      dark:from-veda-card-dark dark:to-[#0d0f12] dark:border-veda-border-dark;
+      dark:from-veda-card-dark dark:to-[#0d0f12] dark:border-veda-border-dark dark:shadow-2xl;
   }
 
   .veda-glass-chip {
