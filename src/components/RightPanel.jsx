@@ -464,6 +464,20 @@ export default function RightPanel() {
     ttsStateRef.current = state.ttsState
   }, [state.ttsState])
 
+  // Keyboard left/right arrow for page navigation
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+      if (e.key === 'ArrowLeft' && state.selectedPage > 1) {
+        dispatch({ type: 'SET_PAGE', payload: state.selectedPage - 1 })
+      } else if (e.key === 'ArrowRight' && state.pdfDoc && state.selectedPage < state.pdfDoc.numPages) {
+        dispatch({ type: 'SET_PAGE', payload: state.selectedPage + 1 })
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [dispatch, state.selectedPage, state.pdfDoc])
+
   useEffect(() => {
     if (state.ttsState === 'idle' && pendingSemanticDeck) {
       setPageDeck(pendingSemanticDeck)
@@ -1164,6 +1178,7 @@ export default function RightPanel() {
                 {state.pageOffset && (state.selectedPage - state.pageOffset > 0)
                   ? ` (P. ${state.selectedPage - state.pageOffset})`
                   : ''}
+                {state.pdfDoc ? ` of ${state.pdfDoc.numPages}` : ''}
               </span>
 
               <button
@@ -1227,7 +1242,15 @@ export default function RightPanel() {
                         : 'Visual reconstructed'}
                 </div>
 
-                {pageDeck?.isDigest ? (
+                {isPreparing ? (
+                  <div className="flex flex-col gap-3 w-full animate-pulse">
+                    <div className="veda-skeleton h-7 w-2/3" />
+                    <div className="veda-skeleton h-4 w-1/3" />
+                    <div className="veda-skeleton h-3.5 w-full mt-2" />
+                    <div className="veda-skeleton h-3.5 w-[88%]" />
+                    <div className="veda-skeleton h-3.5 w-[72%]" />
+                  </div>
+                ) : pageDeck?.isDigest ? (
                   // ── Digest carousel: one story at a time ─────────────────
                   (() => {
                     const topics = pageDeck.topics || []

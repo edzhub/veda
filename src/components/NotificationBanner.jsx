@@ -1,9 +1,18 @@
+import { useEffect } from 'react'
 import { usePDF } from '../context/PDFContext'
 import { cn } from '../lib/cn'
+
+const AUTO_DISMISS_MS = 8000
 
 export default function NotificationBanner() {
   const { state, dispatch } = usePDF()
   const notification = state.notification
+
+  useEffect(() => {
+    if (!notification) return
+    const timer = setTimeout(() => dispatch({ type: 'CLEAR_NOTIFICATION' }), AUTO_DISMISS_MS)
+    return () => clearTimeout(timer)
+  }, [notification, dispatch])
 
   if (!notification) return null
 

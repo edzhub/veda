@@ -360,6 +360,32 @@
   .veda-robot-head {
     animation: float-bob 3.2s ease-in-out infinite;
   }
+  .veda-skeleton {
+    @apply rounded-xl bg-black/[0.06] dark:bg-white/[0.06] overflow-hidden relative;
+    animation: skeleton-pulse 1.6s ease-in-out infinite;
+  }
+
+  .veda-skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%);
+    animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  }
+
+  [data-theme='dark'] .veda-skeleton::after {
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.07) 50%, transparent 100%);
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
 }
 
 @keyframes fadeInUp {
