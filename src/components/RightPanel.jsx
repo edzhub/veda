@@ -296,7 +296,7 @@ function EnlargedImageModal({ imageUrl, title, onClose }) {
   )
 }
 
-export default function RightPanel() {
+export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
   const { state, dispatch } = usePDF()
   const isLight = state.theme === 'light'
   const sarvamCreditsNotifiedRef = useRef(false)
@@ -1146,14 +1146,25 @@ export default function RightPanel() {
           border-veda-border bg-gradient-to-b from-white to-veda-surface
           dark:border-veda-border-dark dark:from-veda-card-dark dark:to-[#0d0f12]"
       >
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="veda-badge">Presentation View</span>
-          </div>
+        <div className="flex items-center gap-3">
+          {/* Sidebar toggle — macOS style */}
+          <button
+            onClick={onToggleSidebar}
+            title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            className="glass-btn w-[30px] h-[30px] rounded-lg text-xs shrink-0
+              bg-black/[0.04] text-veda-muted border border-black/[0.05]
+              hover:bg-black/[0.08] hover:text-veda-text
+              dark:bg-white/[0.04] dark:text-veda-muted-dark dark:border-white/[0.06]
+              dark:hover:bg-white/[0.08] dark:hover:text-veda-text-dark"
+          >
+            {sidebarOpen ? '◧' : '▣'}
+          </button>
 
-          <span className="veda-text-primary text-xl font-extrabold font-display">
-            {pageDeck?.title || selectedEntry?.title || 'Select a topic from the contents'}
-          </span>
+          <div className="flex flex-col gap-0.5">
+            <span className="veda-text-primary text-xl font-extrabold font-display">
+              {pageDeck?.title || selectedEntry?.title || 'Select a topic from the contents'}
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-4">
@@ -1229,17 +1240,25 @@ export default function RightPanel() {
             <div className="flex-[0_0_60%] flex flex-col items-stretch pb-[7.5rem] h-full min-h-0">
               <div
                 key={state.selectedPage}
-                className="animate-fade-in-up veda-card flex-1 w-full relative rounded-3xl p-6 flex flex-col justify-center overflow-hidden min-h-0 transition-all duration-300"
+                className={cn(
+                  'animate-fade-in-up veda-card flex-1 w-full relative rounded-3xl p-6 flex flex-col justify-center overflow-hidden min-h-0 transition-all duration-300',
+                  isAnalyzing && 'veda-card-analyzing'
+                )}
               >
-                {/* Badge overlay indicating status */}
-                <div className="absolute top-4 right-5 text-[0.68rem] veda-text-muted font-semibold">
-                  {isPreparing
-                    ? 'Preparing page...'
-                    : isAnalyzing
-                      ? '🤖 Veda is analyzing text...'
-                      : pageDeck?.isSemantic
-                        ? '✨ AI Refined Presentation'
-                        : 'Visual reconstructed'}
+                {/* Status badge overlay */}
+                <div className="absolute top-4 right-5 flex items-center gap-1.5">
+                  {isAnalyzing && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-veda-accent dark:bg-veda-accent-dark animate-pulse" />
+                  )}
+                  <span className="text-[0.68rem] veda-text-muted font-semibold">
+                    {isPreparing
+                      ? 'Preparing…'
+                      : isAnalyzing
+                        ? 'AI refining…'
+                        : pageDeck?.isSemantic
+                          ? '✦ AI Enhanced'
+                          : pageDeck ? 'Visual extract' : ''}
+                  </span>
                 </div>
 
                 {isPreparing ? (
@@ -1473,12 +1492,17 @@ export default function RightPanel() {
                 </div>
               </div>
 
-              {/* Live Karaoke Narration Card */}
+              {/* Live Read-Along Narration Card */}
               <div className="veda-studio-panel flex-1 flex flex-col p-5 transition-all duration-300 overflow-hidden min-h-0">
                 <div className="flex items-center justify-between border-b border-veda-border dark:border-veda-border-dark pb-2.5 mb-3 shrink-0">
-                  <span className="veda-accent-text text-[0.72rem] tracking-widest uppercase font-bold">
-                    AI Narration
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {isPauseActive && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-veda-accent dark:bg-veda-accent-dark animate-pulse shrink-0" />
+                    )}
+                    <span className="veda-accent-text text-[0.72rem] tracking-widest uppercase font-bold">
+                      {isPauseActive ? 'Reading' : 'Narration'}
+                    </span>
+                  </div>
                   <span className="text-[0.72rem] text-[#555555] dark:text-[#9d9586] bg-black/[0.04] dark:bg-white/[0.04] px-2 py-0.5 rounded-md">
                     {state.wordIndex >= 0 ? `${state.wordIndex + 1}/${words.length}` : `${words.length} words`}
                   </span>
@@ -1510,14 +1534,19 @@ export default function RightPanel() {
           {/* Center section: Media controls & Progress slider */}
           <div className="flex flex-col items-center flex-1 max-w-[480px]">
             <div className="flex items-center gap-3">
-              <button
-                onClick={handlePlay}
-                disabled={!speechText}
-                className={cn('veda-media-btn', isPlayPrimary ? 'veda-media-btn-play' : 'veda-media-btn-play veda-media-btn-play-idle')}
-                title="Play narration"
-              >
-                ▶
-              </button>
+              <div className="relative">
+                {isPlayPrimary && speechText && !isPreparing && (
+                  <span className="absolute inset-0 rounded-full veda-play-pulse pointer-events-none" />
+                )}
+                <button
+                  onClick={handlePlay}
+                  disabled={!speechText}
+                  className={cn('veda-media-btn', isPlayPrimary ? 'veda-media-btn-play' : 'veda-media-btn-play veda-media-btn-play-idle')}
+                  title="Play narration"
+                >
+                  ▶
+                </button>
+              </div>
 
               <button
                 onClick={handlePause}
@@ -1548,7 +1577,7 @@ export default function RightPanel() {
                 className="progress-bar-container flex-1 h-1.5 rounded-full overflow-hidden cursor-pointer relative bg-black/5 dark:bg-white/10"
               >
                 <div
-                  className="h-full transition-[width] duration-[140ms] linear bg-gradient-to-r from-veda-accent to-veda-accent-dark dark:from-veda-accent-dark dark:to-[#ffd27a]"
+                  className="h-full transition-[width] duration-[140ms] linear rounded-full bg-gradient-to-r from-veda-accent to-veda-accent-dark dark:from-veda-accent-dark dark:to-[#ffd27a] veda-progress-fill"
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>

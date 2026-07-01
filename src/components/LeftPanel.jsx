@@ -16,7 +16,7 @@ function getActiveItem(toc, selectedPage) {
   return closest
 }
 
-export default function LeftPanel() {
+export default function LeftPanel({ isOpen, onToggle }) {
   const { state, dispatch } = usePDF()
   const [isUploading, setIsUploading] = useState(false)
 
@@ -59,31 +59,35 @@ export default function LeftPanel() {
 
   return (
     <aside
-      className="flex flex-col w-[300px] h-screen shrink-0 border-r transition-colors duration-300
-        bg-white border-veda-border
-        dark:bg-[#1a1a1a] dark:border-[#2a2a2a]"
+      className={cn(
+        'flex flex-col h-screen shrink-0 border-r transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden',
+        'bg-white border-veda-border dark:bg-[#1a1a1a] dark:border-[#2a2a2a]',
+        isOpen ? 'w-[300px] opacity-100' : 'w-0 opacity-0 border-r-0'
+      )}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-veda-border dark:border-[#2a2a2a]">
-        <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-sm bg-veda-accent dark:bg-veda-accent-dark" />
-          <span className="veda-accent-text text-xs font-semibold tracking-widest uppercase">
-            Contents
+      {/* Veda App Identity Header */}
+      <div className="flex items-center justify-between px-4 py-3.5 border-b border-veda-border dark:border-[#2a2a2a] shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-6 h-6 rounded-lg bg-veda-accent dark:bg-veda-accent-dark flex items-center justify-center shadow-sm shadow-veda-accent/30">
+            <span className="text-white text-[0.6rem] font-black leading-none">V</span>
+          </div>
+          <span className="font-display font-black text-[0.9rem] text-veda-text dark:text-veda-text-dark tracking-tight">
+            Veda
           </span>
         </div>
         {pageCount && (
           <span className="text-[0.68rem] font-semibold text-veda-muted dark:text-veda-muted-dark
             bg-black/[0.04] dark:bg-white/[0.04] px-2 py-0.5 rounded-md">
-            {pageCount} pages
+            {pageCount} pg
           </span>
         )}
       </div>
 
       {/* Upload button */}
-      <div className="p-3">
+      <div className="p-3 shrink-0">
         <label
           className={cn(
-            'flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-lg text-center text-[0.8rem] font-semibold cursor-pointer transition-all duration-200',
+            'flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-xl text-center text-[0.8rem] font-semibold cursor-pointer transition-all duration-200',
             isUploading
               ? 'bg-veda-accent/70 text-white/80 cursor-not-allowed pointer-events-none'
               : 'bg-veda-accent text-white shadow-md shadow-veda-accent/25 hover:brightness-105 active:scale-[0.98] dark:bg-veda-accent-dark dark:text-veda-surface-dark dark:shadow-none'

@@ -360,6 +360,33 @@
   .veda-robot-head {
     animation: float-bob 3.2s ease-in-out infinite;
   }
+
+  /* Play button pulse ring — draws attention to the CTA when idle and ready */
+  .veda-play-pulse {
+    animation: play-pulse-ring 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    background: transparent;
+    border: 1.5px solid var(--color-veda-accent);
+    opacity: 0;
+  }
+
+  [data-theme='dark'] .veda-play-pulse {
+    border-color: var(--color-veda-accent-dark);
+  }
+
+  /* Progress bar glow when playing */
+  .veda-progress-fill {
+    box-shadow: 0 0 6px rgba(217, 119, 6, 0.5);
+  }
+
+  [data-theme='dark'] .veda-progress-fill {
+    box-shadow: 0 0 6px rgba(245, 166, 35, 0.45);
+  }
+
+  /* Slide card glow while AI is analyzing */
+  .veda-card-analyzing {
+    animation: analyzing-glow 2.4s ease-in-out infinite;
+  }
+
   .veda-skeleton {
     @apply rounded-xl bg-black/[0.06] dark:bg-white/[0.06] overflow-hidden relative;
     animation: skeleton-pulse 1.6s ease-in-out infinite;
@@ -386,6 +413,34 @@
 @keyframes skeleton-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.7; }
+}
+
+@keyframes play-pulse-ring {
+  0%   { transform: scale(1);    opacity: 0.6; }
+  70%  { transform: scale(1.55); opacity: 0; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+
+@keyframes analyzing-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(217,119,6,0), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(217,119,6,0.18), 0 8px 28px rgba(217,119,6,0.08);
+  }
+}
+
+[data-theme='dark'] .veda-card-analyzing {
+  animation: analyzing-glow-dark 2.4s ease-in-out infinite;
+}
+
+@keyframes analyzing-glow-dark {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245,166,35,0), 0 4px 24px rgba(0,0,0,0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(245,166,35,0.2), 0 8px 32px rgba(245,166,35,0.07);
+  }
 }
 
 @keyframes fadeInUp {
