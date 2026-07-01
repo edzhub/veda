@@ -86,17 +86,39 @@ function getProgressPercent(wordIndex, totalWords) {
   return Math.min(100, ((wordIndex + 1) / totalWords) * 100)
 }
 
+// Jaccard word-overlap similarity between two title strings (0–1).
+function titleSimilarity(a = '', b = '') {
+  const words = (s) => new Set(s.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean))
+  const wa = words(a)
+  const wb = words(b)
+  const intersection = [...wa].filter((w) => wb.has(w)).length
+  const union = new Set([...wa, ...wb]).size
+  return union === 0 ? 0 : intersection / union
+}
+
 function mergeSemanticDeck(deck, semanticData) {
   if (!semanticData) return deck
 
   const mergedIsDigest = deck.isDigest || !!semanticData.isDigest
+
+  // Match each LLM topic to the closest heuristic topic by title similarity so
+  // images (which were spatially matched to heuristic topics) transfer correctly
+  // even when the LLM reorders topics by importance.
   const mergedTopics =
     (semanticData.isDigest && semanticData.topics)
-      ? semanticData.topics.map((t, idx) => ({
-        ...t,
-        body: t.body || t.summary || '',
-        image: deck.topics[idx]?.image || null
-      }))
+      ? semanticData.topics.map((t) => {
+        let bestIdx = -1
+        let bestScore = -1
+        ;(deck.topics || []).forEach((ht, idx) => {
+          const score = titleSimilarity(t.title, ht.title)
+          if (score > bestScore) { bestScore = score; bestIdx = idx }
+        })
+        return {
+          ...t,
+          body: t.body || t.summary || '',
+          image: bestIdx >= 0 ? (deck.topics[bestIdx]?.image || null) : null,
+        }
+      })
       : deck.topics
   const mergedNarration =
     mergedIsDigest
@@ -1094,7 +1116,7 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
     const isPlayingOrPaused = state.ttsState === 'speaking' || state.ttsState === 'paused'
 
     return (
-      <div className="leading-relaxed text-[0.98rem] font-sans tracking-tight px-2 py-2 veda-text-primary">
+      <div className={cn('leading-relaxed text-[0.98rem] tracking-tight px-2 py-2 veda-text-primary', state.language === 'te-IN' ? 'lang-te text-[1.05rem]' : 'font-sans')}>
         {words.map((word, index) => {
           const isActive = state.wordIndex === index
           const isPast = state.wordIndex > index && state.wordIndex !== -1
@@ -1237,7 +1259,7 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
         ) : (
           <>
             {/* Slide Stage Area (60% width) */}
-            <div className="flex-[0_0_60%] flex flex-col items-stretch pb-[7.5rem] h-full min-h-0">
+            <div className={cn('flex-[0_0_60%] flex flex-col items-stretch pb-[7.5rem] h-full min-h-0', state.language === 'te-IN' && 'lang-te')}>
               <div
                 key={state.selectedPage}
                 className={cn(
@@ -1275,7 +1297,12 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
                     const topics = pageDeck.topics || []
                     const total = topics.length
                     const activeTopic = topics[digestTopicIndex] || {}
-                    const topicImage = activeTopic.image || null
+                    // Collect all unique non-null images from the page for the gallery strip
+                    const allImages = [...new Set(
+                      (pageDeck.images || []).filter(Boolean).concat(
+                        topics.map(t => t.image).filter(Boolean)
+                      )
+                    )]
                     return (
                       <div className="flex flex-col gap-2 w-full h-full min-h-0">
                         <div className="flex items-center justify-between shrink-0">
@@ -1287,14 +1314,31 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
                           </div>
                         </div>
 
+                        {/* Page image gallery strip — shows all extracted images, no guessed matching */}
+                        {allImages.length > 0 && (
+                          <div className="flex gap-2 overflow-x-auto shrink-0 pb-1 scrollbar-none">
+                            {allImages.map((imgUrl, i) => (
+                              <div
+                                key={i}
+                                onClick={() => { setEnlargedImage(imgUrl); setEnlargedTitle(pageDeck.title || selectedEntry?.title); }}
+                                className="shrink-0 h-[90px] rounded-xl overflow-hidden cursor-zoom-in border border-black/8 dark:border-white/10 hover:opacity-90 transition-opacity"
+                                style={{ aspectRatio: 'auto' }}
+                              >
+                                <img
+                                  src={imgUrl}
+                                  alt={`Page image ${i + 1}`}
+                                  className="h-full w-auto object-cover block"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
                         <div
                           key={digestTopicIndex}
-                          className={cn(
-                            'animate-story-fade-in flex-1 min-h-0 grid gap-4 items-start',
-                            topicImage ? 'grid-cols-[1fr_0.75fr]' : 'grid-cols-1'
-                          )}
+                          className="animate-story-fade-in flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto"
                         >
-                          <div className="flex flex-col gap-2 overflow-y-auto max-h-full pr-1">
+                          <div className="flex flex-col gap-2 pr-1">
                             <div className="flex items-center gap-1.5 shrink-0">
                               <span className="text-[0.62rem] font-bold veda-accent-text tracking-widest uppercase">
                                 Story {digestTopicIndex + 1}
@@ -1310,15 +1354,6 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
                               </p>
                             )}
                           </div>
-
-                          {topicImage && (
-                            <div
-                              onClick={() => { setEnlargedImage(topicImage); setEnlargedTitle(activeTopic.title); }}
-                              className="veda-zoom-image"
-                            >
-                              <img src={topicImage} alt={activeTopic.title} className="w-full h-full object-contain block" />
-                            </div>
-                          )}
                         </div>
 
                         <div className="animate-nav-slide-up flex items-center justify-center gap-5 shrink-0 mt-3">
@@ -1429,7 +1464,7 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
             {/* Interaction Sidebar (40% width) */}
             <div
               key={state.selectedPage}
-              className="animate-slide-in-right flex-[0_0_40%] flex flex-col gap-5 h-full pb-[7.5rem] min-h-0"
+              className={cn('animate-slide-in-right flex-[0_0_40%] flex flex-col gap-5 h-full pb-[7.5rem] min-h-0', state.language === 'te-IN' && 'lang-te')}
             >
               {/* Tabbed Insights Card */}
               <div className="veda-card flex-1 flex flex-col rounded-3xl overflow-hidden min-h-0 transition-all duration-300">

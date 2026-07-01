@@ -535,6 +535,64 @@ class LLMState:
         print("Model loaded successfully.")
         return cls._llm
 
+INDICTRANS_LANG_MAP = {
+    "te-IN": "tel_Telu",
+    "hi-IN": "hin_Deva",
+    "ta-IN": "tam_Taml",
+    "kn-IN": "kan_Knda",
+    "ml-IN": "mal_Mlym",
+    "mr-IN": "mar_Deva",
+}
+
+# NLLB-200 (facebook/nllb-200-distilled-600M) — works on CPU, no C extensions required.
+# Replaces IndicTrans2/IndicTransToolkit which requires MSVC build tools on Windows.
+NLLB_MODEL_NAME = "facebook/nllb-200-distilled-600M"
+
+class IndicTransState:
+    _model = None
+    _tokenizer = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_model(cls):
+        if cls._model is not None:
+            return cls._model, cls._tokenizer
+        with cls._lock:
+            if cls._model is not None:
+                return cls._model, cls._tokenizer
+            try:
+                from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+            except ImportError as e:
+                raise ImportError(
+                    f"transformers not installed: {e}. "
+                    "Run: pip install --target server/vendor transformers sentencepiece"
+                )
+            print(f"Loading NLLB-200 translation model ({NLLB_MODEL_NAME}) — first load takes 2-3 minutes...")
+            cls._tokenizer = AutoTokenizer.from_pretrained(NLLB_MODEL_NAME)
+            cls._model = AutoModelForSeq2SeqLM.from_pretrained(NLLB_MODEL_NAME)
+            print("NLLB-200 translation model loaded successfully.")
+            return cls._model, cls._tokenizer
+
+def translate_strings_indictrans2(texts: list[str], target_lang: str = "tel_Telu") -> list[str]:
+    """Translate a list of English strings to target_lang using NLLB-200 locally."""
+    import torch
+    model, tokenizer = IndicTransState.get_model()
+    tokenizer.src_lang = "eng_Latn"
+    inputs = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=256)
+    target_lang_id = tokenizer.convert_tokens_to_ids(target_lang)
+    if target_lang_id == tokenizer.unk_token_id:
+        raise ValueError(f"Unknown target language code for NLLB-200: {target_lang}")
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            forced_bos_token_id=target_lang_id,
+            num_beams=4,
+            max_length=256
+        )
+    result = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+    print(f"NLLB-200 translated {len(texts)} strings to {target_lang}")
+    return result
+
 def _extract_json(text: str) -> dict:
     text = text.strip()
     
@@ -885,9 +943,6 @@ def translate_strings_sarvam(texts: list[str], api_key: str) -> list[str]:
     return translated_texts
 
 def translate_deck_fields(deck: dict) -> dict:
-    if not SARVAM_API_KEY:
-        raise ValueError("SARVAM_API_KEY is not set")
-
     translated_deck = json.loads(json.dumps(deck))
     string_paths: list[tuple[list, str]] = []
     extract_strings(translated_deck, string_paths)
@@ -895,7 +950,14 @@ def translate_deck_fields(deck: dict) -> dict:
         return translated_deck
 
     texts_to_translate = [text for _, text in string_paths]
-    translated_texts = translate_strings_sarvam(texts_to_translate, SARVAM_API_KEY)
+    try:
+        translated_texts = translate_strings_indictrans2(texts_to_translate, "tel_Telu")
+        print("translate_deck: IndicTrans2 succeeded.")
+    except Exception as it_err:
+        print(f"translate_deck: IndicTrans2 failed ({it_err}), falling back to Sarvam...")
+        if not SARVAM_API_KEY:
+            raise ValueError("IndicTrans2 unavailable and SARVAM_API_KEY is not set")
+        translated_texts = translate_strings_sarvam(texts_to_translate, SARVAM_API_KEY)
     for (path, _), trans_val in zip(string_paths, translated_texts):
         set_by_path(translated_deck, path, trans_val)
 
@@ -910,6 +972,33 @@ def translate_deck_fields(deck: dict) -> dict:
 
     translated_deck["isTelugu"] = True
     return translated_deck
+
+class TranslateRequest(BaseModel):
+    texts: list[str]
+    source_lang: str = "eng_Latn"
+    target_lang: str = "tel_Telu"
+
+@app.post("/translate")
+async def translate_endpoint(req: TranslateRequest):
+    """Translate a list of strings using IndicTrans2 (local model), falling back to Sarvam."""
+    if not req.texts:
+        return {"translations": []}
+    try:
+        result = await asyncio.to_thread(
+            translate_strings_indictrans2,
+            req.texts,
+            req.target_lang
+        )
+        return {"translations": result, "engine": "indictrans2"}
+    except Exception as e:
+        print(f"IndicTrans2 translation failed: {e}. Falling back to Sarvam...")
+        if not SARVAM_API_KEY:
+            raise HTTPException(status_code=500, detail=f"IndicTrans2 failed and SARVAM_API_KEY not set: {e}")
+        try:
+            result = await asyncio.to_thread(translate_strings_sarvam, req.texts, SARVAM_API_KEY)
+            return {"translations": result, "engine": "sarvam_fallback"}
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=str(e2))
 
 @app.post("/translate_deck")
 def translate_deck(req: TranslateDeckRequest):
@@ -938,15 +1027,23 @@ def analyze_text(req: AnalyzeRequest):
         analysis = analyze_text_semantic(text, is_digest=req.is_digest, language="en-US")
         sarvam_credits_exhausted = False
         
-        # If Telugu is selected, translate slide text + narration via Sarvam
-        if req.language == "te-IN" and SARVAM_API_KEY:
-            print("Translating slide content into Telugu via Sarvam Translation API...")
+        # If Telugu is selected, translate via IndicTrans2 (local) with Sarvam as fallback
+        if req.language == "te-IN":
+            tgt_lang_code = INDICTRANS_LANG_MAP.get(req.language, "tel_Telu")
+            print(f"Translating slide content into Telugu (IndicTrans2 → Sarvam fallback)...")
             try:
                 string_paths: list[tuple[list, str]] = []
                 extract_strings(analysis, string_paths)
                 if string_paths:
-                    texts_to_translate = [text for _, text in string_paths]
-                    translated = translate_strings_sarvam(texts_to_translate, SARVAM_API_KEY)
+                    texts_to_translate = [t for _, t in string_paths]
+                    try:
+                        translated = translate_strings_indictrans2(texts_to_translate, tgt_lang_code)
+                        print("IndicTrans2 translation succeeded.")
+                    except Exception as it_err:
+                        print(f"IndicTrans2 failed ({it_err}), falling back to Sarvam...")
+                        if not SARVAM_API_KEY:
+                            raise Exception("IndicTrans2 unavailable and SARVAM_API_KEY not set.")
+                        translated = translate_strings_sarvam(texts_to_translate, SARVAM_API_KEY)
                     for (path, _), trans_val in zip(string_paths, translated):
                         set_by_path(analysis, path, trans_val)
 
@@ -966,8 +1063,6 @@ def analyze_text(req: AnalyzeRequest):
                 print(f"Translation to Telugu failed — Sarvam credits exhausted: {trans_err}")
             except Exception as trans_err:
                 print(f"Translation to Telugu failed: {trans_err}.")
-        elif req.language == "te-IN":
-            print("Telugu requested but SARVAM_API_KEY is not set — slide text stays in English.")
         
         if sarvam_credits_exhausted:
             analysis["sarvam_credits_exhausted"] = True
@@ -1081,6 +1176,18 @@ def get_page_layout(page: int):
                 elif b.get("type") == 1:
                     bbox = b.get("bbox")
                     if bbox and b.get("image"):
+                        img_w = bbox[2] - bbox[0]
+                        img_h = bbox[3] - bbox[1]
+                        # Skip zero-dimension or near-zero images (invisible artifacts)
+                        if img_w < 5 or img_h < 5:
+                            continue
+                        # Skip tiny decorative images (icons, bullets, small logos)
+                        if img_w < 80 or img_h < 80:
+                            continue
+                        # Skip full-page-width backgrounds and decorative banners
+                        # (images that span >80% of page width are headers/backgrounds)
+                        if img_w > width * 0.80:
+                            continue
                         image_bytes = b["image"]
                         ext = b.get("ext", "png")
                         img_base64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -1088,7 +1195,11 @@ def get_page_layout(page: int):
                         images.append({
                             "url": url,
                             "x": bbox[0],
-                            "y": height - bbox[3]
+                            "y": height - bbox[3],
+                            "w": img_w,
+                            "h": img_h,
+                            "cx": (bbox[0] + bbox[2]) / 2,
+                            "cy": height - (bbox[1] + bbox[3]) / 2
                         })
             
             return {

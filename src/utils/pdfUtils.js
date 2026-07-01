@@ -609,7 +609,7 @@ async function extractPageImages(page) {
 
     let currentTransform = [1, 0, 0, 1, 0, 0]
 
-    for (let i = 0; i < opList.fnArray.length && images.length < 3; i++) {
+    for (let i = 0; i < opList.fnArray.length && images.length < 20; i++) {
       const fn = opList.fnArray[i]
       if (fn === 12) { // transform
         currentTransform = opList.argsArray[i]
@@ -970,76 +970,71 @@ function sortTopicsByLayout(topics) {
   })
 }
 
-// ── Helper: Bipartite Global Permutation Image Matcher ──────────────────────────
+// ── Helper: Vertical Zone Image Matcher ──────────────────────────────────────
+// Each topic "owns" the vertical strip from its heading y down to the next
+// heading y (or page bottom). An image belongs to the topic whose zone contains
+// the image centre. This is more reliable than global distance minimisation for
+// magazine-style multi-column digest layouts.
 function matchImagesToTopicsGlobal(topics, imagesData) {
   const matchedImages = new Array(topics.length).fill(null)
   if (topics.length === 0 || imagesData.length === 0) return matchedImages
 
-  // 1. Calculate the cost (distance) matrix between all topics and images.
-  // In page layouts, related text and illustrations sit in the same row,
-  // so we penalize vertical offset (dy) more heavily than horizontal (dx).
-  const costMatrix = []
-  for (let t = 0; t < topics.length; t++) {
-    costMatrix[t] = []
-    for (let img = 0; img < imagesData.length; img++) {
-      const dx = topics[t].x - imagesData[img].x
-      const dy = topics[t].y - imagesData[img].y
-      // dy is scaled by 4, which squares to a 16x penalty in vertical mismatch!
-      costMatrix[t][img] = dx * dx + (4 * dy) * (4 * dy)
-    }
-  }
+  // Sort topics descending by y (highest y = top of page in bottom-up coords).
+  const sorted = topics
+    .map((t, originalIdx) => ({ ...t, originalIdx }))
+    .sort((a, b) => b.y - a.y)
 
-  // 2. Generate all possible assignment permutations.
-  // Each topic gets assigned to at most one image index (or -1 if unassigned).
-  // We want to find the assignment mapping with the minimum sum of costs.
-  let bestMapping = null
-  let minTotalCost = Infinity
+  // Build vertical zones: each topic owns [zoneTop, zoneBottom].
+  // zoneTop  = topic heading y (in bottom-up coords, larger = higher on page)
+  // zoneBottom = next topic's heading y (or 0 = page bottom)
+  const zones = sorted.map((t, i) => ({
+    originalIdx: t.originalIdx,
+    zoneTop: t.y,
+    zoneBottom: i + 1 < sorted.length ? sorted[i + 1].y : 0,
+    x: t.x,
+  }))
 
-  // Helper to generate permutations recursively
-  function search(topicIdx, currentMapping, usedImages, currentCost) {
-    if (topicIdx === topics.length) {
-      if (currentCost < minTotalCost) {
-        minTotalCost = currentCost
-        bestMapping = [...currentMapping]
-      }
-      return
-    }
+  // Use image centre y (cy) if provided, fall back to image y.
+  const usedImages = new Set()
 
-    // Option A: assign this topic to an available image
-    let assignedAny = false
-    for (let imgIdx = 0; imgIdx < imagesData.length; imgIdx++) {
-      if (!usedImages.has(imgIdx)) {
-        assignedAny = true
-        usedImages.add(imgIdx)
-        currentMapping[topicIdx] = imgIdx
-        search(
-          topicIdx + 1,
-          currentMapping,
-          usedImages,
-          currentCost + costMatrix[topicIdx][imgIdx]
-        )
-        currentMapping[topicIdx] = -1
-        usedImages.delete(imgIdx)
+  for (const zone of zones) {
+    let bestImgIdx = -1
+    let bestScore = -Infinity
+
+    for (let i = 0; i < imagesData.length; i++) {
+      if (usedImages.has(i)) continue
+      const imgCy = imagesData[i].cy !== undefined ? imagesData[i].cy : imagesData[i].y
+      const inZone = imgCy <= zone.zoneTop && imgCy >= zone.zoneBottom
+
+      // Primary: image centre falls inside this topic's vertical zone.
+      // Score = negative horizontal distance (prefer image in same column).
+      if (inZone) {
+        const score = -Math.abs(imagesData[i].x - zone.x)
+        if (score > bestScore) { bestScore = score; bestImgIdx = i }
       }
     }
 
-    // Option B: leave this topic unassigned (only if there are fewer images than topics, or as fallback)
-    if (!assignedAny || imagesData.length < topics.length) {
-      currentMapping[topicIdx] = -1
-      search(topicIdx + 1, currentMapping, usedImages, currentCost + 10000000) // high penalty for unassigned
+    if (bestImgIdx !== -1) {
+      matchedImages[zone.originalIdx] = imagesData[bestImgIdx].url
+      usedImages.add(bestImgIdx)
     }
   }
 
-  const initialMapping = new Array(topics.length).fill(-1)
-  search(0, initialMapping, new Set(), 0)
-
-  // 3. Map URLs based on best permutation mapping.
-  if (bestMapping) {
+  // Second pass: assign leftover images to topics that are still null,
+  // using nearest-centre distance so no image is completely orphaned.
+  for (let i = 0; i < imagesData.length; i++) {
+    if (usedImages.has(i)) continue
+    const imgCy = imagesData[i].cy !== undefined ? imagesData[i].cy : imagesData[i].y
+    let bestTopicIdx = -1
+    let bestDist = Infinity
     for (let t = 0; t < topics.length; t++) {
-      const imgIdx = bestMapping[t]
-      if (imgIdx !== -1 && imgIdx !== undefined) {
-        matchedImages[t] = imagesData[imgIdx].url
-      }
+      if (matchedImages[t] !== null) continue
+      const d = Math.abs(topics[t].y - imgCy)
+      if (d < bestDist) { bestDist = d; bestTopicIdx = t }
+    }
+    if (bestTopicIdx !== -1) {
+      matchedImages[bestTopicIdx] = imagesData[i].url
+      usedImages.add(i)
     }
   }
 

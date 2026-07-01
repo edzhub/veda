@@ -5,6 +5,7 @@
 @theme {
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
   --font-display: 'Outfit', sans-serif;
+  --font-telugu: 'Noto Sans Telugu', system-ui, sans-serif;
 
   --color-veda-accent: #d97706;
   --color-veda-accent-dark: #f5a623;
@@ -64,6 +65,18 @@
   h5,
   h6 {
     font-family: var(--font-display);
+  }
+
+  /* Telugu language content — Noto Sans Telugu for all text nodes */
+  .lang-te,
+  .lang-te h1, .lang-te h2, .lang-te h3,
+  .lang-te h4, .lang-te h5, .lang-te h6,
+  .lang-te p, .lang-te span, .lang-te li,
+  .lang-te div {
+    font-family: var(--font-telugu) !important;
+    line-height: 1.75;
+    letter-spacing: 0;
+    word-break: break-word;
   }
 
   button,
