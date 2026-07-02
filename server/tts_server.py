@@ -37,6 +37,13 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 try:
+    import pdfplumber as _pdfplumber  # layout-aware text extraction
+    _PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    _PDFPLUMBER_AVAILABLE = False
+    print("pdfplumber not available — text extraction will use PyMuPDF only")
+
+try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import StreamingResponse
@@ -593,6 +600,115 @@ def translate_strings_indictrans2(texts: list[str], target_lang: str = "tel_Telu
     print(f"NLLB-200 translated {len(texts)} strings to {target_lang}")
     return result
 
+ESRGAN_MODEL_PATH = BASE_DIR / "models" / "RealESRGAN_x4plus.pth"
+ESRGAN_TILE_SIZE = 256   # Process this many pixels at a time; keeps RAM ~1GB on CPU
+ESRGAN_TILE_PAD  = 10    # Overlap between tiles to avoid edge seams
+
+class ESRGANState:
+    """Lazy-load singleton for the Real-ESRGAN 4× upscaler."""
+    _model = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_model(cls):
+        if cls._model is not None:
+            return cls._model
+        with cls._lock:
+            if cls._model is not None:
+                return cls._model
+            import torch
+            sys.path.insert(0, str(BASE_DIR))
+            from rrdb_net import RRDBNet
+            print("Loading Real-ESRGAN model (RealESRGAN_x4plus.pth) …")
+            model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+            state = torch.load(str(ESRGAN_MODEL_PATH), map_location="cpu")
+            weights = state.get("params_ema", state.get("params", state))
+            model.load_state_dict(weights, strict=True)
+            model.eval()
+            print("Real-ESRGAN model loaded.")
+            cls._model = model
+            return cls._model
+
+
+def _lanczos_upscale(pil_img, target_scale: int = 2):
+    """
+    Upscale a PIL image using Lanczos resampling + Unsharp Mask sharpening.
+
+    This is the primary upscaler for PDF-extracted images: it produces clean,
+    artefact-free results because PDF images are already at decent quality and
+    only need crisp interpolation, not AI-hallucinated detail.
+
+    Steps:
+      1. Lanczos ×target_scale for clean high-quality interpolation
+      2. Unsharp Mask to restore the slight softness Lanczos introduces
+    """
+    from PIL import Image, ImageFilter
+
+    new_w = pil_img.width * target_scale
+    new_h = pil_img.height * target_scale
+    upscaled = pil_img.resize((new_w, new_h), Image.LANCZOS)
+    # Mild unsharp mask: radius=1.5, percent=60, threshold=3
+    sharpened = upscaled.filter(ImageFilter.UnsharpMask(radius=1.5, percent=60, threshold=3))
+    return sharpened
+
+
+def _esrgan_upscale(img_np):
+    """
+    Run Real-ESRGAN 4× upscaling on a uint8 HWC RGB numpy array.
+    Reserved for genuinely tiny / highly degraded images.
+    Returns a uint8 HWC RGB numpy array.
+    """
+    import numpy as np
+    import torch
+
+    model = ESRGANState.get_model()
+
+    h, w = img_np.shape[:2]
+    img_t = torch.from_numpy(img_np.astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0)
+
+    tile = ESRGAN_TILE_SIZE
+    pad  = ESRGAN_TILE_PAD
+    scale = 4
+
+    out_h, out_w = h * scale, w * scale
+    output = torch.zeros(1, 3, out_h, out_w, dtype=torch.float32)
+
+    tiles_x = max(1, (w + tile - 1) // tile)
+    tiles_y = max(1, (h + tile - 1) // tile)
+
+    with torch.no_grad():
+        for iy in range(tiles_y):
+            for ix in range(tiles_x):
+                x0 = ix * tile
+                y0 = iy * tile
+                x1 = min(x0 + tile, w)
+                y1 = min(y0 + tile, h)
+
+                px0 = max(x0 - pad, 0)
+                py0 = max(y0 - pad, 0)
+                px1 = min(x1 + pad, w)
+                py1 = min(y1 + pad, h)
+
+                tile_in = img_t[:, :, py0:py1, px0:px1]
+                tile_out = model(tile_in)
+
+                ox0 = (x0 - px0) * scale
+                oy0 = (y0 - py0) * scale
+                ox1 = ox0 + (x1 - x0) * scale
+                oy1 = oy0 + (y1 - y0) * scale
+
+                output[:, :, y0 * scale:y1 * scale, x0 * scale:x1 * scale] = tile_out[:, :, oy0:oy1, ox0:ox1]
+
+    out_np = output.squeeze(0).permute(1, 2, 0).clamp(0, 1).numpy()
+    return (out_np * 255).astype(np.uint8)
+
+
+# Images narrower or taller than this threshold are considered "tiny" and sent
+# through Real-ESRGAN (which adds detail). Larger images use Lanczos (which
+# preserves existing quality without hallucinating).
+ESRGAN_SIZE_THRESHOLD = 100
+
+
 def _extract_json(text: str) -> dict:
     text = text.strip()
     
@@ -944,6 +1060,9 @@ def translate_strings_sarvam(texts: list[str], api_key: str) -> list[str]:
 
 def translate_deck_fields(deck: dict) -> dict:
     translated_deck = json.loads(json.dumps(deck))
+    # Snapshot English titles before in-place translation
+    for topic in translated_deck.get("topics", []):
+        topic["title_en"] = topic.get("title", "")
     string_paths: list[tuple[list, str]] = []
     extract_strings(translated_deck, string_paths)
     if not string_paths:
@@ -1032,6 +1151,12 @@ def analyze_text(req: AnalyzeRequest):
             tgt_lang_code = INDICTRANS_LANG_MAP.get(req.language, "tel_Telu")
             print(f"Translating slide content into Telugu (IndicTrans2 → Sarvam fallback)...")
             try:
+                # Snapshot English titles before in-place translation so the frontend
+                # can still match images by English title (title_en) even after Telugu
+                # titles overwrite the title field.
+                for topic in analysis.get("topics", []):
+                    topic["title_en"] = topic.get("title", "")
+
                 string_paths: list[tuple[list, str]] = []
                 extract_strings(analysis, string_paths)
                 if string_paths:
@@ -1098,6 +1223,224 @@ async def upload_pdf(request: Request):
             print(f"Failed to load PDF document: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to load PDF: {e}")
 
+def _extract_lines_pymupdf(page_obj, width, height, active_analyzer):
+    """
+    PyMuPDF-based text line extraction — used as fallback when pdfplumber is
+    unavailable or fails.  Applies the same header/footer/margin filters as the
+    pdfplumber path.
+    """
+    d = page_obj.get_text("dict")
+    lines = []
+    for b in d.get("blocks", []):
+        if b.get("type") != 0:
+            continue
+        for l in b.get("lines", []):
+            spans = l.get("spans", [])
+            if not spans:
+                continue
+            line_text = reconstruct_line_text(spans)
+            if not line_text:
+                continue
+            if active_analyzer and line_text in active_analyzer.running_headers_footers:
+                continue
+            origin_y = spans[0]["origin"][1]
+            is_margin = (origin_y < height * 0.10) or (origin_y > height * 0.90)
+            if is_margin:
+                if re.match(r'^\d+$', line_text) or re.match(r'^[ivxIVX]+$', line_text):
+                    continue
+                if re.match(r'^(page|slide|p\.)\s*\d+$', line_text, re.IGNORECASE):
+                    continue
+            max_font_size = 0.0
+            min_x = float("inf")
+            baseline_y = 0.0
+            for s in spans:
+                max_font_size = max(max_font_size, s["size"])
+                min_x = min(min_x, s["origin"][0])
+                baseline_y = max(baseline_y, height - s["origin"][1])
+            lines.append({
+                "text": line_text,
+                "x": min_x,
+                "y": baseline_y,
+                "fontSize": max_font_size,
+            })
+    return lines
+
+
+def _group_words_into_lines(words):
+    """Group pdfplumber word dicts into lines by proximity of their `top` coordinate."""
+    if not words:
+        return []
+    sorted_w = sorted(words, key=lambda w: (w["top"], w["x0"]))
+    lines, cur = [], [sorted_w[0]]
+    cur_top = sorted_w[0]["top"]
+    for w in sorted_w[1:]:
+        if abs(w["top"] - cur_top) <= 4:
+            cur.append(w)
+        else:
+            lines.append(sorted(cur, key=lambda w: w["x0"]))
+            cur, cur_top = [w], w["top"]
+    lines.append(sorted(cur, key=lambda w: w["x0"]))
+    return lines
+
+
+def _extract_lines_pdfplumber(pdf_path, page_num, img_rects_topdown, width, height, active_analyzer):
+    """
+    Layout-aware text extraction combining pdfplumber (text) and pre-extracted image
+    rectangles (to filter text that bleeds over image zones).
+
+    img_rects_topdown: list of (x0, y0, x1, y1) in top-down screen coords.
+
+    Returns list of {"text", "x", "y" (bottom-up), "fontSize"} to match the
+    existing PyMuPDF output format expected by the frontend.
+
+    Column-detection approach:
+    - Sample horizontal coverage across the middle 40 % of the page.
+    - A gap ≥ 3 % of page width in that region signals a column gutter.
+    - Full-width spans (crossing the gutter) are treated as headers/titles and
+      placed before/after column content depending on their vertical position.
+    """
+    with _pdfplumber.open(pdf_path) as pdf:
+        pl_page = pdf.pages[page_num - 1]
+
+        # Words with per-word font size (falls back gracefully if attr missing)
+        try:
+            words = pl_page.extract_words(
+                extra_attrs=["size"],
+                keep_blank_chars=False,
+                x_tolerance=3,
+                y_tolerance=3,
+            )
+        except Exception:
+            words = pl_page.extract_words(keep_blank_chars=False, x_tolerance=3, y_tolerance=3)
+            for w in words:
+                w.setdefault("size", 12.0)
+
+        if not words:
+            return []
+
+        # Filter words that substantially overlap any image zone (> 30 % of word width)
+        def _overlaps_image(w):
+            wx0, wy0, wx1, wy1 = w["x0"], w["top"], w["x1"], w["bottom"]
+            for (ix0, iy0, ix1, iy1) in img_rects_topdown:
+                ox = min(wx1, ix1) - max(wx0, ix0)
+                oy = min(wy1, iy1) - max(wy0, iy0)
+                if ox > 0 and oy > 0:
+                    word_w = wx1 - wx0 or 1
+                    if ox / word_w > 0.3:
+                        return True
+            return False
+
+        filtered = [w for w in words if not _overlaps_image(w)]
+        if not filtered:
+            return []
+
+        # ── Column detection ─────────────────────────────────────────────────
+        mid_start = int(width * 0.30)
+        mid_end = int(width * 0.70)
+        x_spans = [(w["x0"], w["x1"]) for w in filtered]
+
+        # Count how many words cover each x position (sampled every 2 pts)
+        coverage = {x: sum(1 for (x0, x1) in x_spans if x0 <= x <= x1)
+                    for x in range(mid_start, mid_end, 2)}
+
+        # Find the widest contiguous zero-coverage gap in the middle band
+        gutter_x = None
+        max_gap = 0
+        gap_start = None
+        for x in range(mid_start, mid_end, 2):
+            if coverage.get(x, 0) == 0:
+                if gap_start is None:
+                    gap_start = x
+            else:
+                if gap_start is not None:
+                    gap = x - gap_start
+                    if gap > max_gap:
+                        max_gap, gutter_x = gap, (gap_start + x) // 2
+                    gap_start = None
+        if gap_start is not None:
+            gap = mid_end - gap_start
+            if gap > max_gap:
+                max_gap, gutter_x = gap, (gap_start + mid_end) // 2
+
+        is_two_col = max_gap >= width * 0.03 and gutter_x is not None
+
+        # ── Group into lines then classify ───────────────────────────────────
+        all_line_groups = _group_words_into_lines(filtered)
+
+        if is_two_col:
+            # A line "spans the gutter" if it has words on both sides
+            def _spans(line):
+                return any(w["x0"] < gutter_x for w in line) and any(w["x1"] > gutter_x for w in line)
+
+            full_lines   = [l for l in all_line_groups if _spans(l)]
+            left_lines   = [l for l in all_line_groups if not _spans(l) and all(w["x1"] <= gutter_x for w in l)]
+            right_lines  = [l for l in all_line_groups if not _spans(l) and all(w["x0"] >= gutter_x for w in l)]
+
+            # Column content starts where the first left or right column word appears
+            col_words = [w for l in left_lines + right_lines for w in l]
+            col_start = min((w["top"] for w in col_words), default=0)
+            col_end   = max((w["top"] for w in col_words), default=height)
+
+            pre_col  = sorted([l for l in full_lines if l[0]["top"] < col_start],  key=lambda l: l[0]["top"])
+            post_col = sorted([l for l in full_lines if l[0]["top"] > col_end],   key=lambda l: l[0]["top"])
+            mid_full = sorted([l for l in full_lines if col_start <= l[0]["top"] <= col_end], key=lambda l: l[0]["top"])
+
+            # Primary column = the one with more words (main article body).
+            # Secondary column = the one with fewer words (sidebar / captions).
+            # If counts are within 1.8× of each other, use left-first (standard order).
+            left_wc  = sum(len(l) for l in left_lines)
+            right_wc = sum(len(l) for l in right_lines)
+            if right_wc > left_wc * 1.8:
+                primary_col   = sorted(right_lines, key=lambda l: l[0]["top"])
+                secondary_col = sorted(left_lines,  key=lambda l: l[0]["top"])
+            else:
+                primary_col   = sorted(left_lines,  key=lambda l: l[0]["top"])
+                secondary_col = sorted(right_lines, key=lambda l: l[0]["top"])
+
+            ordered = (
+                pre_col
+                + primary_col
+                + mid_full
+                + secondary_col
+                + post_col
+            )
+        else:
+            ordered = all_line_groups
+
+        # ── Build output, applying header/footer filters ─────────────────────
+        result = []
+        for line_words in ordered:
+            text = " ".join(w["text"] for w in line_words).strip()
+            if not text:
+                continue
+
+            if active_analyzer and text in active_analyzer.running_headers_footers:
+                continue
+
+            top_y = line_words[0]["top"]
+            is_margin = top_y < height * 0.10 or top_y > height * 0.90
+            if is_margin:
+                if re.match(r'^\d+$', text) or re.match(r'^[ivxIVX]+$', text):
+                    continue
+                if re.match(r'^(page|slide|p\.)\s*\d+$', text, re.IGNORECASE):
+                    continue
+
+            sizes = [w.get("size") or 12.0 for w in line_words]
+            font_size = max(sizes)
+            min_x = min(w["x0"] for w in line_words)
+            # Convert top-down bottom coord → bottom-up y (matches PyMuPDF output)
+            y_bottom_up = height - line_words[0]["bottom"]
+
+            result.append({
+                "text": text,
+                "x": min_x,
+                "y": y_bottom_up,
+                "fontSize": font_size,
+            })
+
+        return result
+
+
 @app.get("/page_layout")
 def get_page_layout(page: int):
     global active_doc, active_analyzer
@@ -1125,83 +1468,83 @@ def get_page_layout(page: int):
             width = rect.width
             height = rect.height
             
-            d = page_obj.get_text("dict")
-            
             lines = []
             images = []
-            
-            for b in d.get("blocks", []):
-                if b.get("type") == 0:
-                    for l in b.get("lines", []):
-                        spans = l.get("spans", [])
-                        if not spans:
-                            continue
-                        
-                        line_text = reconstruct_line_text(spans)
-                        if not line_text:
-                            continue
-                            
-                        # 1. Filter out repeating headers & footers
-                        if active_analyzer and line_text in active_analyzer.running_headers_footers:
-                            continue
-                            
-                        # 2. Filter out page numbers (pure digits/Roman numerals) & "Page X" templates in margins (top/bottom 10%)
-                        origin_y = spans[0]["origin"][1]
-                        is_margin = (origin_y < height * 0.10) or (origin_y > height * 0.90)
-                        
-                        if is_margin:
-                            # Standalone digits or Roman numerals
-                            if re.match(r'^\d+$', line_text) or re.match(r'^[ivxIVX]+$', line_text):
-                                continue
-                            # Standard page patterns
-                            if re.match(r'^(page|slide|p\.)\s*\d+$', line_text, re.IGNORECASE):
-                                continue
-                        
-                        # Recompute coordinates using the helper logic
-                        max_font_size = 0.0
-                        min_x = float('inf')
-                        baseline_y = 0.0
-                        
-                        for s in spans:
-                            max_font_size = max(max_font_size, s["size"])
-                            min_x = min(min_x, s["origin"][0])
-                            baseline_y = max(baseline_y, height - s["origin"][1])
-                        
-                        lines.append({
-                            "text": line_text,
-                            "x": min_x,
-                            "y": baseline_y,
-                            "fontSize": max_font_size
-                        })
-                elif b.get("type") == 1:
-                    bbox = b.get("bbox")
-                    if bbox and b.get("image"):
-                        img_w = bbox[2] - bbox[0]
-                        img_h = bbox[3] - bbox[1]
-                        # Skip zero-dimension or near-zero images (invisible artifacts)
-                        if img_w < 5 or img_h < 5:
-                            continue
-                        # Skip tiny decorative images (icons, bullets, small logos)
-                        if img_w < 80 or img_h < 80:
-                            continue
-                        # Skip full-page-width backgrounds and decorative banners
-                        # (images that span >80% of page width are headers/backgrounds)
-                        if img_w > width * 0.80:
-                            continue
-                        image_bytes = b["image"]
-                        ext = b.get("ext", "png")
-                        img_base64 = base64.b64encode(image_bytes).decode("utf-8")
-                        url = f"data:image/{ext};base64,{img_base64}"
-                        images.append({
-                            "url": url,
-                            "x": bbox[0],
-                            "y": height - bbox[3],
-                            "w": img_w,
-                            "h": img_h,
-                            "cx": (bbox[0] + bbox[2]) / 2,
-                            "cy": height - (bbox[1] + bbox[3]) / 2
-                        })
-            
+
+            # ── Image extraction via get_images() ────────────────────────────────
+            # get_text("dict") type-1 blocks miss most PDF images because the
+            # majority of PDFs embed images as XObjects (placed with Do operator)
+            # rather than inline. get_images(full=True) finds all of them.
+            seen_xrefs = set()
+            for img_info in page_obj.get_images(full=True):
+                xref = img_info[0]
+                if xref in seen_xrefs:
+                    continue
+                seen_xrefs.add(xref)
+
+                try:
+                    rects = page_obj.get_image_rects(xref)
+                except Exception:
+                    rects = []
+
+                for rect in rects:
+                    img_w = rect.width
+                    img_h = rect.height
+                    # Skip invisible or near-zero rendered size
+                    if img_w < 5 or img_h < 5:
+                        continue
+                    # Skip tiny decorative elements (icons, bullets, dividers)
+                    if img_w < 50 or img_h < 50:
+                        continue
+                    # Skip full-page-width backgrounds / decorative banners
+                    if img_w > width * 0.90:
+                        continue
+
+                    try:
+                        img_dict = active_doc.extract_image(xref)
+                    except Exception:
+                        continue
+
+                    image_bytes = img_dict.get("image")
+                    if not image_bytes:
+                        continue
+                    ext = img_dict.get("ext", "png")
+                    img_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                    url = f"data:image/{ext};base64,{img_base64}"
+                    images.append({
+                        "url": url,
+                        "x": rect.x0,
+                        "y": height - rect.y1,
+                        "w": img_w,
+                        "h": img_h,
+                        "cx": (rect.x0 + rect.x1) / 2,
+                        "cy": height - (rect.y0 + rect.y1) / 2
+                    })
+                    break  # one rect per xref is enough for position info
+
+            # ── Text extraction ───────────────────────────────────────────────
+            # pdfplumber gives column-aware, image-zone-filtered text.
+            # Fall back to PyMuPDF's get_text("dict") if pdfplumber is unavailable
+            # or raises an unexpected error.
+            if _PDFPLUMBER_AVAILABLE:
+                try:
+                    # Convert image positions to top-down coords for overlap filtering
+                    img_rects_td = [
+                        (img["x"], height - img["y"] - img["h"],
+                         img["x"] + img["w"], height - img["y"])
+                        for img in images
+                    ]
+                    lines = _extract_lines_pdfplumber(
+                        str(active_doc.name), page, img_rects_td,
+                        width, height, active_analyzer
+                    )
+                    print(f"pdfplumber extracted {len(lines)} lines for page {page}")
+                except Exception as pl_err:
+                    print(f"pdfplumber failed for page {page} ({pl_err}), falling back to PyMuPDF")
+                    lines = _extract_lines_pymupdf(page_obj, width, height, active_analyzer)
+            else:
+                lines = _extract_lines_pymupdf(page_obj, width, height, active_analyzer)
+
             return {
                 "width": width,
                 "height": height,
@@ -1287,6 +1630,79 @@ async def transcribe_audio(req: TranscribeRequest):
             os.unlink(tmp_path)
         except OSError:
             pass
+
+@app.post("/upscale_image")
+async def upscale_image(request: Request):
+    """
+    Upscale a base64-encoded image and return a sharper version.
+
+    Routing logic (based on input dimensions):
+      • width < ESRGAN_SIZE_THRESHOLD or height < ESRGAN_SIZE_THRESHOLD
+          → Real-ESRGAN ×4 (adds AI-reconstructed detail for tiny/degraded images)
+      • otherwise
+          → Lanczos ×2 + Unsharp Mask (clean, artefact-free for normal PDF images)
+
+    Real-ESRGAN is intentionally avoided for larger images because it hallucinates
+    detail that doesn't exist, causing the "morphed wax figure" distortion on people,
+    faces, and complex photo content.
+
+    Request body (JSON):
+        { "image": "<base64 PNG or JPEG>", "format": "png" | "jpeg" }
+
+    Response (JSON):
+        { "image": "<base64 upscaled image>", "method": "lanczos" | "esrgan" }
+    """
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"Pillow not installed: {exc}") from exc
+
+    body = await request.json()
+    b64 = body.get("image", "")
+    fmt = body.get("format", "png").lower()
+    if not b64:
+        raise HTTPException(status_code=400, detail="Missing 'image' field in request body.")
+
+    if "," in b64:
+        b64 = b64.split(",", 1)[1]
+    img_bytes = base64.b64decode(b64)
+    pil_img = Image.open(BytesIO(img_bytes)).convert("RGB")
+
+    w, h = pil_img.width, pil_img.height
+    is_tiny = w < ESRGAN_SIZE_THRESHOLD or h < ESRGAN_SIZE_THRESHOLD
+    use_esrgan = is_tiny and ESRGAN_MODEL_PATH.exists()
+
+    print(f"/upscale_image: input {w}×{h} px, method={'esrgan' if use_esrgan else 'lanczos'}, fmt={fmt}")
+
+    loop = asyncio.get_event_loop()
+
+    if use_esrgan:
+        import numpy as np
+        # Cap input so ESRGAN stays fast on CPU
+        MAX_INPUT_PX = 512
+        if w > MAX_INPUT_PX or h > MAX_INPUT_PX:
+            pil_img.thumbnail((MAX_INPUT_PX, MAX_INPUT_PX), Image.LANCZOS)
+        img_np = np.array(pil_img)
+        upscaled_np = await loop.run_in_executor(None, _esrgan_upscale, img_np)
+        out_pil = Image.fromarray(upscaled_np)
+        method = "esrgan"
+    else:
+        # Lanczos is fast enough to run inline; wrap in executor anyway for consistency
+        out_pil = await loop.run_in_executor(None, _lanczos_upscale, pil_img, 2)
+        method = "lanczos"
+
+    buf = BytesIO()
+    if fmt == "jpeg":
+        out_pil.save(buf, format="JPEG", quality=92)
+        mime = "image/jpeg"
+    else:
+        out_pil.save(buf, format="PNG")
+        mime = "image/png"
+    out_b64 = base64.b64encode(buf.getvalue()).decode()
+    print(f"/upscale_image: output {out_w}×{out_h} px [{method}], {len(out_b64)//1024} KB b64")
+
+    return {"image": f"data:{mime};base64,{out_b64}", "method": method}
+
 
 def start_model_download() -> None:
     filename, url, model_paths = get_selected_model_info()

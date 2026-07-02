@@ -217,11 +217,31 @@ function detectTopics(lines, fallbackTitle = '') {
   // Pre-sort the input lines by column-based reading order!
   const sortedLines = sortLinesByReadingOrder(lines)
 
-  // Compute median font size across all lines
+  // Compute heading threshold using font-size gap clustering.
+  // Strategy: find the largest absolute jump between consecutive distinct font
+  // sizes. The threshold sits at the midpoint of that gap — everything above is
+  // treated as a heading. Fallback to the old median-based formula when the gap
+  // is too small (< 2pt) to be meaningful (e.g. all body text, no real headings).
   const sizes = [...sortedLines].map((l) => l.fontSize).sort((a, b) => a - b)
   const median = sizes[Math.floor(sizes.length / 2)] || 1
   const maxFontSize = Math.max(...sizes)
-  const headingThreshold = Math.max(median * 1.35, maxFontSize * 0.33)
+
+  const uniqueSizes = [...new Set(sizes)].sort((a, b) => a - b)
+  let maxGap = 0
+  let gapMidpoint = null
+  for (let i = 1; i < uniqueSizes.length; i++) {
+    const gap = uniqueSizes[i] - uniqueSizes[i - 1]
+    if (gap > maxGap) {
+      maxGap = gap
+      gapMidpoint = (uniqueSizes[i - 1] + uniqueSizes[i]) / 2
+    }
+  }
+  // Only use gap-based threshold if the gap is at least 2pt and splits
+  // meaningfully (threshold must be above the body-text median).
+  const headingThreshold =
+    gapMidpoint && maxGap >= 2 && gapMidpoint > median
+      ? gapMidpoint
+      : Math.max(median * 1.35, maxFontSize * 0.50)
 
   const normalizedFallback = fallbackTitle ? normalizeText(fallbackTitle) : ''
 
@@ -706,7 +726,7 @@ export async function fetchSemanticAnalysis(sourceText, fallbackTitle = '', isDi
   // If the page contains very little content (under 30 words), skip the local LLM
   // to avoid hallucinations or system instructions reflections.
   const wordCount = sourceText ? sourceText.trim().split(/\s+/).filter(Boolean).length : 0
-  if (wordCount < 30) {
+  if (wordCount < 50) {
     return null
   }
 
@@ -878,6 +898,26 @@ export async function extractPagePresentation(pdfDoc, pageNumber, fallbackTitle 
     images = imagesData.map((img) => img.url)
   }
 
+  // ── Image-primary page: has images but very little text ──────────────────
+  // Cover pages, full-page ads, photo spreads. Skip LLM; build a minimal slide
+  // that leads with the image.
+  const wordCount = sourceText.trim().split(/\s+/).filter(Boolean).length
+  if (images.length > 0 && wordCount < 50) {
+    const title = buildTitle(lines, fallbackTitle) || fallbackTitle || 'Visual'
+    return {
+      isDigest: false,
+      isImagePrimary: true,
+      title,
+      subtitle: '',
+      summary: sourceText || '',
+      highlights: [],
+      supportingPoints: [],
+      sourceText,
+      images,
+      narration: title ? `This section features ${title}.` : 'Image-focused content.',
+    }
+  }
+
   // ── Multi-topic digest detection ──────────────────────────────────────────
   const { topics, intro } = detectTopics(lines, fallbackTitle)
   if (topics.length >= 3 || (topics.length === 2 && Math.abs(topics[0].fontSize - topics[1].fontSize) <= 2)) {
@@ -1039,4 +1079,35 @@ function matchImagesToTopicsGlobal(topics, imagesData) {
   }
 
   return matchedImages
+}
+
+const API_BASE = import.meta.env.VITE_LAYOUT_API_URL || 'http://127.0.0.1:8765'
+
+/**
+ * Upscale an array of base64 image data-URLs via Real-ESRGAN on the backend.
+ * Requests run concurrently. Any image that fails falls back to its original.
+ * Returns a new array of the same length with upscaled (or original) data-URLs.
+ */
+export async function upscaleImages(imageUrls) {
+  if (!imageUrls || imageUrls.length === 0) return imageUrls
+
+  const results = await Promise.all(
+    imageUrls.map(async (url) => {
+      if (!url || !url.startsWith('data:image')) return url
+      try {
+        const fmt = url.startsWith('data:image/jpeg') ? 'jpeg' : 'png'
+        const resp = await fetch(`${API_BASE}/upscale_image`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: url, format: fmt }),
+        })
+        if (!resp.ok) return url
+        const data = await resp.json()
+        return data.image || url
+      } catch {
+        return url
+      }
+    })
+  )
+  return results
 }

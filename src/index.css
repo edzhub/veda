@@ -322,14 +322,14 @@
   }
 
   .veda-zoom-image {
-    @apply rounded-[14px] overflow-hidden aspect-[4/3] w-full cursor-zoom-in
+    @apply rounded-[14px] overflow-hidden aspect-[4/3] w-full cursor-default
       border border-veda-border bg-[#f8f8f6] shadow-md
       transition-all duration-300 ease-out hover:scale-[1.025] hover:shadow-xl
       dark:border-white/10 dark:bg-[#0c0d10] dark:shadow-2xl dark:hover:shadow-2xl;
   }
 
   .veda-slide-image {
-    @apply relative w-full h-[180px] rounded-2xl overflow-hidden cursor-zoom-in
+    @apply relative w-full h-[180px] rounded-2xl overflow-hidden cursor-default
       border border-veda-border bg-[#fcfcfa] shadow-md
       transition-all duration-300 ease-out hover:scale-[1.025] hover:shadow-xl
       dark:border-white/5 dark:bg-[#090a0d] dark:shadow-2xl;

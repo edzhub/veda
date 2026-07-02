@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePDF, notifySarvamCreditsExhausted } from '../context/PDFContext'
-import { extractPagePresentation, extractPageText, fetchSemanticAnalysis, fetchTeluguDeck } from '../utils/pdfUtils'
+import { extractPagePresentation, extractPageText, fetchSemanticAnalysis, fetchTeluguDeck, upscaleImages } from '../utils/pdfUtils'
 import { requestCloudTTS, requestCloudTTSBoundaries, getTTSStreamUrl, supportsCloudTTS } from '../utils/speechUtils'
 import { cn } from '../lib/cn'
 import AIAvatar from './AIAvatar'
@@ -106,13 +106,21 @@ function mergeSemanticDeck(deck, semanticData) {
   // even when the LLM reorders topics by importance.
   const mergedTopics =
     (semanticData.isDigest && semanticData.topics)
-      ? semanticData.topics.map((t) => {
+      ? semanticData.topics.map((t, i) => {
         let bestIdx = -1
         let bestScore = -1
+        // Prefer title_en (English title preserved before translation) for matching
+        // so Telugu topic titles can still be matched against English heuristic titles.
+        const matchTitle = t.title_en || t.title
         ;(deck.topics || []).forEach((ht, idx) => {
-          const score = titleSimilarity(t.title, ht.title)
+          const score = titleSimilarity(matchTitle, ht.title)
           if (score > bestScore) { bestScore = score; bestIdx = idx }
         })
+        // If no title similarity found (e.g. fully different language, score stayed 0),
+        // fall back to positional matching so images stay consistent.
+        if (bestScore <= 0 && i < (deck.topics || []).length) {
+          bestIdx = i
+        }
         return {
           ...t,
           body: t.body || t.summary || '',
@@ -154,6 +162,19 @@ function mergeSemanticDeck(deck, semanticData) {
     topics: mergedTopics,
     isDigest: mergedIsDigest,
     isSemantic: true
+  }
+}
+
+/** Apply a {originalUrl → upscaledUrl} map to deck.images and topics[*].image. */
+function applyUpscaledImages(deck, urlMap) {
+  if (!deck || !urlMap || Object.keys(urlMap).length === 0) return deck
+  return {
+    ...deck,
+    images: (deck.images || []).map((u) => urlMap[u] || u),
+    topics: (deck.topics || []).map((t) => ({
+      ...t,
+      image: t.image ? (urlMap[t.image] || t.image) : t.image,
+    })),
   }
 }
 
@@ -273,7 +294,7 @@ function EnlargedImageModal({ imageUrl, title, onClose }) {
   return (
     <div
       className={cn(
-        'fixed inset-0 z-[2000] flex flex-col items-center justify-center p-8 cursor-zoom-out',
+        'fixed inset-0 z-[2000] flex flex-col items-center justify-center p-8 cursor-default',
         isClosing ? 'animate-fade-out-backdrop' : 'animate-fade-in-backdrop'
       )}
       onClick={handleClose}
@@ -382,6 +403,15 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
   useEffect(() => {
     pageDeckRef.current = pageDeck
   }, [pageDeck])
+
+  // Persists upscaled URL mappings across deck swaps on the same page so that
+  // when the semantic/Telugu deck replaces the heuristic deck it immediately
+  // inherits any already-upscaled images without another round-trip.
+  const upscaledUrlMapRef = useRef({})
+
+  // Tracks which page number the current pageDeck was built for.
+  // Used to prevent reusing an old deck when navigating to a new page in Telugu mode.
+  const pageDeckPageRef = useRef(null)
 
   const digestTopicIndexRef = useRef(digestTopicIndex)
   useEffect(() => {
@@ -809,10 +839,13 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
 
 
   useEffect(() => {
+    // Always clear stale deck immediately so old page content never shows during navigation
+    setPageDeck(null)
+    setPendingSemanticDeck(null)
+    upscaledUrlMapRef.current = {}   // reset per-page upscale cache
+
     if (!state.pdfDoc || !state.selectedPage) {
-      setPageDeck(null)
       setIsAnalyzing(false)
-      setPendingSemanticDeck(null)
       setActiveBoundaries([])
       return undefined
     }
@@ -823,6 +856,7 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
     if (cachedDeck?.isSemantic || cachedDeck?.isTelugu) {
       handleStop()
       dispatch({ type: 'SET_PAGE_TEXT', payload: cachedDeck.sourceText || '' })
+      pageDeckPageRef.current = state.selectedPage
       setPageDeck(cachedDeck)
       setIsPreparing(false)
       setIsAnalyzing(false)
@@ -834,7 +868,9 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
     // Fast path: translate existing deck to Telugu (works even when local LLM is unavailable)
     if (state.language === 'te-IN') {
       const enCacheKey = `${state.selectedPage}_en-US`
-      const sourceDeck = pageCacheRef.current[enCacheKey] || pageDeckRef.current
+      // Only fall back to pageDeckRef if it was built for THIS page (language switch, not navigation)
+      const samePage = pageDeckPageRef.current === state.selectedPage
+      const sourceDeck = pageCacheRef.current[enCacheKey] || (samePage ? pageDeckRef.current : null)
       if (sourceDeck && (sourceDeck.title || sourceDeck.topics?.length)) {
         let isCancelled = false
         setIsPreparing(false)
@@ -842,6 +878,7 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
         setPendingSemanticDeck(null)
         setActiveBoundaries([])
         handleStop()
+        pageDeckPageRef.current = state.selectedPage
         setPageDeck(sourceDeck)
 
         fetchTeluguDeck(sourceDeck, { onSarvamCreditsExhausted })
@@ -924,10 +961,40 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
         }
 
         dispatch({ type: 'SET_PAGE_TEXT', payload: pageText })
-        setPageDeck(deck)
-        setIsPreparing(false)
 
-        // Kick off semantic analysis in the background
+        // Helper: start upscaling for a deck's images, store results in upscaledUrlMapRef
+        // so any subsequent deck swap on the same page can immediately use cached results.
+        function startUpscaling(targetDeck) {
+          const rawImages = [
+            ...(targetDeck.images || []),
+            ...(targetDeck.topics || []).map((t) => t.image).filter(Boolean),
+          ]
+          const toUpscale = [...new Set(rawImages.filter(Boolean))]
+            .filter((u) => !upscaledUrlMapRef.current[u])   // skip already-upscaled
+          if (toUpscale.length === 0) return
+          upscaleImages(toUpscale)
+            .then((upscaled) => {
+              if (isCancelled) return
+              const urlMap = Object.fromEntries(toUpscale.map((u, i) => [u, upscaled[i]]))
+              // Persist in ref so future deck swaps can apply it immediately
+              upscaledUrlMapRef.current = { ...upscaledUrlMapRef.current, ...urlMap }
+              setPageDeck((prev) => applyUpscaledImages(prev, urlMap))
+            })
+            .catch(() => {/* upscaling is optional — silently ignore failures */})
+        }
+
+        // In Telugu mode, keep the skeleton up until the translated deck is ready
+        // so the user never sees an English-language flash on a Telugu page.
+        // In English mode, show the heuristic deck immediately for a snappy feel.
+        const showImmediately = state.language !== 'te-IN'
+        if (showImmediately) {
+          pageDeckPageRef.current = state.selectedPage
+          setPageDeck(deck)
+          setIsPreparing(false)
+          startUpscaling(deck)
+        }
+
+        // Kick off semantic analysis (and Telugu translation) in the background
         setIsAnalyzing(true)
         fetchSemanticAnalysis(deck.sourceText, deck.title, deck.isDigest, state.language, { onSarvamCreditsExhausted })
           .then(async (semanticData) => {
@@ -943,6 +1010,17 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
             setIsAnalyzing(false)
             if (!finalDeck || isCancelled) return
 
+            // Apply any already-upscaled images before displaying the final deck,
+            // then kick off upscaling for any new images the LLM deck may have introduced.
+            finalDeck = applyUpscaledImages(finalDeck, upscaledUrlMapRef.current)
+            startUpscaling(finalDeck)
+
+            // In Telugu mode, this is the FIRST time we show the deck (skeleton → Telugu)
+            if (!showImmediately) {
+              pageDeckPageRef.current = state.selectedPage
+              setIsPreparing(false)
+            }
+
             const semanticCacheKey = `${state.selectedPage}_${state.language}`
             setPageCache((prev) => ({ ...prev, [semanticCacheKey]: finalDeck }))
 
@@ -955,6 +1033,12 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
           .catch((err) => {
             console.error('Background analysis error:', err)
             setIsAnalyzing(false)
+            // If Telugu analysis failed and we never showed the deck, fall back to English heuristic
+            if (!showImmediately && !isCancelled) {
+              pageDeckPageRef.current = state.selectedPage
+              setPageDeck(applyUpscaledImages(deck, upscaledUrlMapRef.current))
+              setIsPreparing(false)
+            }
           })
       } catch (error) {
         console.error(error)
@@ -1321,7 +1405,7 @@ export default function RightPanel({ sidebarOpen, onToggleSidebar }) {
                               <div
                                 key={i}
                                 onClick={() => { setEnlargedImage(imgUrl); setEnlargedTitle(pageDeck.title || selectedEntry?.title); }}
-                                className="shrink-0 h-[90px] rounded-xl overflow-hidden cursor-zoom-in border border-black/8 dark:border-white/10 hover:opacity-90 transition-opacity"
+                                className="shrink-0 h-[90px] rounded-xl overflow-hidden cursor-default border border-black/8 dark:border-white/10 hover:opacity-90 transition-opacity"
                                 style={{ aspectRatio: 'auto' }}
                               >
                                 <img
